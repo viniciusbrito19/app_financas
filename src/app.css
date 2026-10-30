@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+
+@theme {
+	--color-brand: #6d5efc;
+	--color-receita: #16a34a;
+	--color-despesa: #e11d48;
+	--font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+@layer base {
+	html {
+		-webkit-tap-highlight-color: transparent;
+	}
+	body {
+		@apply bg-zinc-100 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+		padding-top: env(safe-area-inset-top);
+	}
+	/* iOS dá zoom em inputs com fonte < 16px */
+	input,
+	select,
+	textarea {
+		font-size: 16px;
+	}
+}
+
+@layer components {
+	.card {
+		@apply rounded-2xl bg-white p-4 shadow-sm dark:bg-zinc-900;
+	}
+	.label {
+		@apply mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400;
+	}
+	.input {
+		@apply h-12 w-full rounded-xl border border-zinc-200 bg-white px-3 outline-none focus:border-brand dark:border-zinc-700 dark:bg-zinc-800;
+	}
+	.btn {
+		@apply inline-flex h-12 items-center justify-center gap-2 rounded-xl px-4 font-semibold active:scale-[.98] disabled:opacity-50;
+	}
+	.btn-primary {
+		@apply bg-brand text-white;
+	}
+	.btn-ghost {
+		@apply bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200;
+	}
+	.chip {
+		@apply rounded-full px-2 py-0.5 text-[11px] font-semibold;
+	}
+	.fab {
+		@apply fixed right-5 z-20 grid size-14 place-items-center rounded-full bg-brand text-3xl text-white shadow-lg active:scale-95;
+		bottom: calc(5rem + env(safe-area-inset-bottom));
+	}
+}
