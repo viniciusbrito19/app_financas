@@ -34,9 +34,8 @@
 					.order('vencimento')
 			) as Lancamento[];
 			if (t !== alvo) return;
-			// livres, o já ligado a esta transação ou os pagos em várias vezes (aceitam mais um pagamento)
-			const acumula = (l: Lancamento) => !!app.recs.find((r) => r.id === l.recorrencia_id)?.acumula;
-			lancs = ls.filter((l) => l.status === 'previsto' || l.id === alvo.lancamento_id || acumula(l));
+			// todos, inclusive os já pagos: um gasto extra no mês soma no valor real do lançamento
+			lancs = ls;
 			carregado = alvo.id;
 		})();
 	});

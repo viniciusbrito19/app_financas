@@ -66,7 +66,7 @@
 			<label class="label" for="lanc">Conciliar com lançamento previsto</label>
 			<select id="lanc" class="input" bind:value={f.lancamento_id} onchange={herdarCategoria}>
 				<option value={null}>Nenhum (gasto não previsto)</option>
-				{#each opcoes as l (l.id)}<option value={l.id}>{l.descricao} · {dataCurta(l.vencimento)} · {brl(l.valor_real ?? l.valor_previsto)}</option>{/each}
+				{#each opcoes as l (l.id)}<option value={l.id}>{l.descricao} · {l.status === 'pago' ? `já pago ${brl(l.valor_real ?? l.valor_previsto)} (vai somar)` : `previsto ${brl(l.valor_previsto)}`}</option>{/each}
 			</select>
 		</div>
 	{/if}
