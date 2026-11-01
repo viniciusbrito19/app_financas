@@ -55,3 +55,56 @@ export interface Lancamento {
 	status: 'previsto' | 'pago';
 	pago_em: string | null;
 }
+
+export type Meio = 'pix' | 'debito' | 'cartao' | 'boleto' | 'transferencia' | 'tarifa' | 'outro';
+export type Natureza = 'gasto' | 'receita' | 'transferencia' | 'pagamento_fatura';
+
+export interface Conta {
+	id: string;
+	residencia_id: string;
+	nome: string;
+	tipo: 'corrente' | 'cartao';
+	banco: 'bb' | 'caixa' | 'outro';
+	membro_id: string | null;
+	recorrencia_id: string | null;
+}
+
+export interface Importacao {
+	id: string;
+	conta_id: string;
+	arquivo: string;
+	formato: 'ofx' | 'pdf_extrato' | 'pdf_fatura';
+	competencia: string | null;
+	total: number | null;
+	qtd: number;
+	created_at: string;
+}
+
+export interface Regra {
+	id: string;
+	residencia_id: string;
+	padrao: string;
+	categoria_id: string | null;
+	natureza: Natureza | null;
+	recorrencia_id: string | null;
+}
+
+export interface Transacao {
+	id: string;
+	residencia_id: string;
+	conta_id: string;
+	importacao_id: string | null;
+	data: string;
+	competencia: string;
+	descricao: string;
+	descricao_norm: string;
+	valor: number;
+	meio: Meio;
+	natureza: Natureza;
+	categoria_id: string | null;
+	lancamento_id: string | null;
+	parcela: number | null;
+	parcelas: number | null;
+	projetada: boolean;
+	hash: string;
+}

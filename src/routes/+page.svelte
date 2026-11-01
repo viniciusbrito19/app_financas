@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, cat, membro } from '#lib/app.svelte.ts';
+	import { app, cat, MEIOS, membro } from '#lib/app.svelte.ts';
 	import CamposBase from '#lib/components/CamposBase.svelte';
 	import Icone from '#lib/components/Icone.svelte';
 	import MonthPicker from '#lib/components/MonthPicker.svelte';
@@ -7,21 +7,51 @@
 	import Sheet from '#lib/components/Sheet.svelte';
 	import { brl, dataCurta, hoje, parseValor, valorInput } from '#lib/format.ts';
 	import { ok, sb } from '#lib/supabase.ts';
-	import type { Lancamento, Tipo } from '#lib/types.ts';
+	import type { Lancamento, Tipo, Transacao } from '#lib/types.ts';
 
-	let itens = $state<Lancamento[]>([]);
+	type L = Lancamento & { transacoes: { count: number }[] };
+
+	let itens = $state<L[]>([]);
+	/** gastos/receitas importados que não correspondem a nenhum lançamento previsto */
+	let outros = $state<Transacao[]>([]);
 	let carregando = $state(true);
 
 	async function carregar(mes = app.mes) {
 		ok(await sb.rpc('gerar_mes', { p_res: app.res!.id, p_comp: mes }));
-		const dados = ok(
-			await sb.from('lancamentos').select('*').eq('residencia_id', app.res!.id).eq('competencia', mes).order('vencimento')
-		) as Lancamento[];
+		const [ls, ts] = await Promise.all([
+			sb.from('lancamentos').select('*, transacoes(count)').eq('residencia_id', app.res!.id).eq('competencia', mes).order('vencimento'),
+			sb
+				.from('transacoes')
+				.select('*')
+				.eq('residencia_id', app.res!.id)
+				.eq('competencia', mes)
+				.eq('projetada', false)
+				.is('lancamento_id', null)
+				.in('natureza', ['gasto', 'receita'])
+				.order('data')
+		]);
 		if (mes === app.mes) {
-			itens = dados;
+			itens = ok(ls) as L[];
+			outros = ok(ts) as Transacao[];
 			carregando = false;
 		}
 	}
+
+	const conciliado = (l: L) => (l.transacoes[0]?.count ?? 0) > 0;
+
+	/** "Outros gastos" agrupados por categoria (receita = valor positivo). */
+	const outrosGrupos = $derived.by(() => {
+		const m = new Map<string, { id: string | null; ts: Transacao[]; total: number }>();
+		for (const t of outros.filter((t) => t.valor < 0)) {
+			const k = t.categoria_id ?? '';
+			const g = m.get(k) ?? m.set(k, { id: t.categoria_id, ts: [], total: 0 }).get(k)!;
+			g.ts.push(t);
+			g.total -= t.valor;
+		}
+		return [...m.values()].sort((a, b) => b.total - a.total);
+	});
+	const outrasReceitas = $derived(outros.filter((t) => t.valor > 0));
+	let expandido = $state<string | null>(null);
 
 	$effect(() => {
 		carregando = true;
@@ -37,7 +67,9 @@
 			const ls = itens
 				.filter((l) => l.tipo === tipo)
 				.sort((a, b) => +(a.status === 'pago') - +(b.status === 'pago') || a.vencimento.localeCompare(b.vencimento));
-			return { tipo, ls, total: soma(ls), pago: soma(ls.filter((l) => l.status === 'pago')) };
+			// importados não previstos já são realizados: entram no total e no pago
+			const extra = outros.filter((t) => (tipo === 'receita' ? t.valor > 0 : t.valor < 0)).reduce((s, t) => s + Math.abs(t.valor), 0);
+			return { tipo, ls, total: soma(ls) + extra, pago: soma(ls.filter((l) => l.status === 'pago')) + extra };
 		})
 	);
 	const [rec, desp] = $derived(grupos);
@@ -74,8 +106,13 @@
 	let atual = $state<Lancamento | null>(null);
 	let f = $state({ tipo: 'despesa' as Tipo, descricao: '', categoria_id: null as string | null, membro_id: null as string | null, valor: '', vencimento: '', status: 'previsto' as Lancamento['status'], pago_em: '' });
 
-	function abrir(l: Lancamento | null) {
+	let vinculadas = $state<Transacao[]>([]);
+
+	async function abrir(l: L | null) {
 		atual = l;
+		vinculadas = [];
+		if (l && conciliado(l))
+			sb.from('transacoes').select('*').eq('lancamento_id', l.id).order('data').then((r) => (vinculadas = ok(r) as Transacao[]));
 		f = l
 			? { ...l, valor: valorInput(l.valor_real ?? l.valor_previsto), pago_em: l.pago_em ?? hoje() }
 			: { tipo: 'despesa', descricao: '', categoria_id: null, membro_id: null, valor: '', vencimento: hoje().startsWith(app.mes.slice(0, 8)) ? hoje() : app.mes, status: 'previsto', pago_em: hoje() };
@@ -139,7 +176,7 @@
 
 {#if carregando}
 	<p class="mt-8 text-center text-zinc-500">Carregando…</p>
-{:else if !itens.length}
+{:else if !itens.length && !outros.length}
 	<div class="card mt-4 text-center text-zinc-500">
 		<p>Nenhum lançamento neste mês.</p>
 		<p class="text-sm">Cadastre receitas e despesas em <b>Recorrentes</b> ou toque em + para um avulso.</p>
@@ -166,6 +203,7 @@
 									<span class="chip {s.cls}">{s.txt}</span>
 									{#if l.membro_id}<span>{membro(l.membro_id)?.nome}</span>{/if}
 									{#if d}<span class={d.cls}>{d.txt}</span>{/if}
+									{#if conciliado(l)}<span title="Conciliado com extrato/fatura">🔗</span>{/if}
 								</p>
 							</div>
 							<div class="text-right">
@@ -178,6 +216,52 @@
 			</ul>
 		{/if}
 	{/each}
+
+	{#if outrosGrupos.length}
+		<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
+			<span>Outros gastos (não previstos)</span><span>{brl(outrosGrupos.reduce((s, g) => s + g.total, 0))}</span>
+		</h2>
+		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+			{#each outrosGrupos as g (g.id)}
+				{@const c = cat(g.id)}
+				<li>
+					<button class="flex w-full items-center gap-3 px-3 py-3 text-left" onclick={() => (expandido = expandido === g.id ? null : g.id)}>
+						<Icone {c} />
+						<div class="min-w-0 flex-1">
+							<p class="truncate font-medium">{c?.nome ?? 'Sem categoria'}</p>
+							<p class="text-xs text-zinc-500">{g.ts.length} {g.ts.length === 1 ? 'transação' : 'transações'}</p>
+						</div>
+						<p class="font-semibold tabular-nums">{brl(g.total)}</p>
+					</button>
+					{#if expandido === g.id}
+						<ul class="bg-zinc-50 px-3 pb-2 dark:bg-zinc-950/40">
+							{#each g.ts as t (t.id)}
+								<li class="flex items-center gap-2 py-1.5 text-sm">
+									<span class="w-11 text-xs text-zinc-500">{dataCurta(t.data)}</span>
+									<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
+									<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
+									<span class="tabular-nums">{brl(-t.valor)}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</li>
+			{/each}
+		</ul>
+	{/if}
+
+	{#if outrasReceitas.length}
+		<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">Outras entradas</h2>
+		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+			{#each outrasReceitas as t (t.id)}
+				<li class="flex items-center gap-2 px-3 py-2.5 text-sm">
+					<span class="w-11 text-xs text-zinc-500">{dataCurta(t.data)}</span>
+					<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
+					<span class="font-semibold text-receita tabular-nums">{brl(t.valor)}</span>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 {/if}
 
 <button class="fab" onclick={() => abrir(null)} aria-label="Novo lançamento avulso">+</button>
@@ -201,6 +285,20 @@
 			<div>
 				<label class="label" for="pagoem">Data do pagamento</label>
 				<input id="pagoem" class="input" type="date" bind:value={f.pago_em} />
+			</div>
+		{/if}
+		{#if vinculadas.length}
+			<div>
+				<p class="label">Conciliado com {vinculadas.length} {vinculadas.length === 1 ? 'transação' : 'transações'}</p>
+				<ul class="max-h-60 divide-y divide-zinc-100 overflow-y-auto rounded-xl bg-zinc-100 px-3 dark:divide-zinc-700 dark:bg-zinc-800">
+					{#each vinculadas as t (t.id)}
+						<li class="flex items-center gap-2 py-2 text-sm">
+							<span class="w-11 text-xs text-zinc-500">{dataCurta(t.data)}</span>
+							<span class="min-w-0 flex-1 truncate">{cat(t.categoria_id)?.icone ?? ''} {t.descricao}</span>
+							<span class="tabular-nums">{brl(-t.valor)}</span>
+						</li>
+					{/each}
+				</ul>
 			</div>
 		{/if}
 		<button class="btn btn-primary w-full">Salvar</button>

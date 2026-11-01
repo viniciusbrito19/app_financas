@@ -4,7 +4,8 @@
 	import Seg from '#lib/components/Seg.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
 	import { ok, sb } from '#lib/supabase.ts';
-	import type { Categoria, Membro, Tipo } from '#lib/types.ts';
+	import type { Categoria, Conta, Membro, Regra, Tipo } from '#lib/types.ts';
+	import { NATUREZAS } from '#lib/app.svelte.ts';
 
 	async function renomearCasa() {
 		const nome = prompt('Nome da residência', app.res!.nome)?.trim();
@@ -62,6 +63,60 @@
 		carregarCadastros();
 	}
 
+	// --- contas e cartões --------------------------------------------------
+	let abertaConta = $state(false);
+	let contaAtual = $state<Conta | null>(null);
+	let fc = $state({ nome: '', tipo: 'corrente' as Conta['tipo'], banco: 'bb' as Conta['banco'], membro_id: null as string | null, recorrencia_id: null as string | null });
+
+	function abrirConta(c: Conta | null) {
+		contaAtual = c;
+		fc = c ? { nome: c.nome, tipo: c.tipo, banco: c.banco, membro_id: c.membro_id, recorrencia_id: c.recorrencia_id } : { nome: '', tipo: 'corrente', banco: 'bb', membro_id: null, recorrencia_id: null };
+		abertaConta = true;
+	}
+
+	async function salvarConta(e: SubmitEvent) {
+		e.preventDefault();
+		const row = { ...fc, recorrencia_id: fc.tipo === 'cartao' ? fc.recorrencia_id : null };
+		ok(
+			contaAtual
+				? await sb.from('contas').update(row).eq('id', contaAtual.id)
+				: await sb.from('contas').insert({ ...row, residencia_id: app.res!.id })
+		);
+		abertaConta = false;
+		carregarCadastros();
+	}
+
+	async function excluirConta() {
+		if (!contaAtual || !confirm(`Excluir ${contaAtual.nome}? Todas as transações importadas dela serão apagadas.`)) return;
+		ok(await sb.from('contas').delete().eq('id', contaAtual.id));
+		abertaConta = false;
+		carregarCadastros();
+	}
+
+	// --- regras de classificação -------------------------------------------
+	let abertaRegra = $state(false);
+	let regraAtual = $state<Regra | null>(null);
+	let fr = $state({ padrao: '', categoria_id: null as string | null, natureza: null as Regra['natureza'], recorrencia_id: null as string | null });
+
+	function abrirRegra(r: Regra) {
+		regraAtual = r;
+		fr = { padrao: r.padrao, categoria_id: r.categoria_id, natureza: r.natureza, recorrencia_id: r.recorrencia_id };
+		abertaRegra = true;
+	}
+
+	async function salvarRegra(e: SubmitEvent) {
+		e.preventDefault();
+		ok(await sb.from('regras').update({ ...fr, padrao: fr.padrao.trim().toUpperCase() }).eq('id', regraAtual!.id));
+		abertaRegra = false;
+		carregarCadastros();
+	}
+
+	async function excluirRegra() {
+		ok(await sb.from('regras').delete().eq('id', regraAtual!.id));
+		abertaRegra = false;
+		carregarCadastros();
+	}
+
 	async function excluirCategoria() {
 		if (!atual || !confirm(`Excluir a categoria ${atual.nome}?`)) return;
 		ok(await sb.from('categorias').delete().eq('id', atual.id));
@@ -106,6 +161,44 @@
 	{/each}
 </ul>
 
+<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
+	<span>Contas e cartões</span>
+	<button class="text-brand" onclick={() => abrirConta(null)}>+ Adicionar</button>
+</h2>
+<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+	{#each app.contas as c (c.id)}
+		<li>
+			<button class="flex w-full items-center gap-3 px-3 py-3 text-left" onclick={() => abrirConta(c)}>
+				<span class="grid size-10 place-items-center rounded-full bg-zinc-100 text-lg dark:bg-zinc-800">{c.tipo === 'cartao' ? '💳' : '🏦'}</span>
+				<div class="min-w-0 flex-1">
+					<p class="font-medium">{c.nome}</p>
+					<p class="text-xs text-zinc-500">
+						{c.tipo === 'cartao' ? 'Cartão de crédito' : 'Conta corrente'} · {c.banco.toUpperCase()}
+						{#if c.tipo === 'cartao'}· fatura: {app.recs.find((r) => r.id === c.recorrencia_id)?.descricao ?? '⚠ sem recorrência'}{/if}
+					</p>
+				</div>
+			</button>
+		</li>
+	{:else}
+		<li class="px-3 py-3 text-sm text-zinc-500">Cadastre BB, Caixa e o cartão para importar extratos e faturas.</li>
+	{/each}
+</ul>
+
+{#if app.regras.length}
+	<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">Regras de classificação ({app.regras.length})</h2>
+	<ul class="card max-h-96 divide-y divide-zinc-100 overflow-y-auto p-0 dark:divide-zinc-800">
+		{#each app.regras as r (r.id)}
+			{@const c = app.cats.find((x) => x.id === r.categoria_id)}
+			<li>
+				<button class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm" onclick={() => abrirRegra(r)}>
+					<span class="min-w-0 flex-1 truncate font-mono text-xs">{r.padrao}</span>
+					<span class="shrink-0 text-zinc-500">→ {c ? `${c.icone ?? ''} ${c.nome}` : r.natureza ? NATUREZAS[r.natureza] : '—'}</span>
+				</button>
+			</li>
+		{/each}
+	</ul>
+{/if}
+
 {#each [['receita', 'Categorias de receita'], ['despesa', 'Categorias de despesa']] as [tipo, titulo] (tipo)}
 	<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
 		<span>{titulo}</span>
@@ -141,5 +234,78 @@
 		</div>
 		<button class="btn btn-primary w-full">Salvar</button>
 		{#if atual}<button type="button" class="btn w-full text-despesa" onclick={excluirCategoria}>Excluir</button>{/if}
+	</form>
+</Sheet>
+
+<Sheet bind:open={abertaConta} title={contaAtual ? 'Editar conta' : 'Nova conta'}>
+	<form class="space-y-4" onsubmit={salvarConta}>
+		<Seg bind:value={fc.tipo} options={[['corrente', 'Conta corrente'], ['cartao', 'Cartão de crédito']]} />
+		<div class="grid grid-cols-[1fr_7rem] gap-3">
+			<div>
+				<label class="label" for="knome">Nome</label>
+				<input id="knome" class="input" required placeholder={fc.tipo === 'cartao' ? 'Cartão Caixa' : 'Conta BB'} bind:value={fc.nome} />
+			</div>
+			<div>
+				<label class="label" for="kbanco">Banco</label>
+				<select id="kbanco" class="input" bind:value={fc.banco}>
+					<option value="bb">BB</option>
+					<option value="caixa">Caixa</option>
+					<option value="outro">Outro</option>
+				</select>
+			</div>
+		</div>
+		<div>
+			<label class="label" for="ktit">Titular</label>
+			<select id="ktit" class="input" bind:value={fc.membro_id}>
+				<option value={null}>Casa</option>
+				{#each app.membros as m (m.id)}<option value={m.id}>{m.nome}</option>{/each}
+			</select>
+		</div>
+		{#if fc.tipo === 'cartao'}
+			<div>
+				<label class="label" for="krec">Recorrência que representa a fatura</label>
+				<select id="krec" class="input" bind:value={fc.recorrencia_id}>
+					<option value={null}>Nenhuma</option>
+					{#each app.recs.filter((r) => r.tipo === 'despesa') as r (r.id)}<option value={r.id}>{r.descricao}</option>{/each}
+				</select>
+				<p class="mt-1 text-xs text-zinc-500">Crie em Recorrentes uma despesa variável (ex.: "Fatura Cartão Caixa") com o dia do vencimento.</p>
+			</div>
+		{/if}
+		<button class="btn btn-primary w-full">Salvar</button>
+		{#if contaAtual}<button type="button" class="btn w-full text-despesa" onclick={excluirConta}>Excluir</button>{/if}
+	</form>
+</Sheet>
+
+<Sheet bind:open={abertaRegra} title="Regra de classificação">
+	<form class="space-y-4" onsubmit={salvarRegra}>
+		<div>
+			<label class="label" for="rpad">Quando a descrição contiver</label>
+			<input id="rpad" class="input uppercase" required bind:value={fr.padrao} />
+		</div>
+		<div class="grid grid-cols-2 gap-3">
+			<div>
+				<label class="label" for="rcat">Categoria</label>
+				<select id="rcat" class="input" bind:value={fr.categoria_id}>
+					<option value={null}>—</option>
+					{#each app.cats as c (c.id)}<option value={c.id}>{c.icone} {c.nome}</option>{/each}
+				</select>
+			</div>
+			<div>
+				<label class="label" for="rnat">Natureza</label>
+				<select id="rnat" class="input" bind:value={fr.natureza}>
+					<option value={null}>Automática</option>
+					{#each Object.entries(NATUREZAS) as [v, r] (v)}<option value={v}>{r}</option>{/each}
+				</select>
+			</div>
+		</div>
+		<div>
+			<label class="label" for="rrec">Conciliar com a recorrência</label>
+			<select id="rrec" class="input" bind:value={fr.recorrencia_id}>
+				<option value={null}>Nenhuma</option>
+				{#each app.recs as r (r.id)}<option value={r.id}>{r.descricao}</option>{/each}
+			</select>
+		</div>
+		<button class="btn btn-primary w-full">Salvar</button>
+		<button type="button" class="btn w-full text-despesa" onclick={excluirRegra}>Excluir</button>
 	</form>
 </Sheet>

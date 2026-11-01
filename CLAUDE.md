@@ -5,6 +5,7 @@ App de finanças da residência (PWA mobile-first). SvelteKit 3 + Svelte 5 (rune
 ## Comandos
 - `npm run dev` — dev server (requer `.env`, ver `.env.example`)
 - `npm run check` — svelte-check (tipos)
+- `npm test` — vitest (parsers e prévia de importação)
 - `npm run build` — gera `build/` (com `BASE_PATH=/app_financas` no CI)
 - `npx supabase link --project-ref <ref>` e depois `npx supabase db push` — aplica `supabase/migrations`
 
@@ -13,6 +14,10 @@ App de finanças da residência (PWA mobile-first). SvelteKit 3 + Svelte 5 (rune
 - `src/routes/+layout.ts`: `ssr = false`, guarda de rota (login → onboarding → app) e carrega o estado global `app` (`src/lib/app.svelte.ts`).
 - Multi-usuário por **residência**: toda tabela tem `residencia_id` e policy `sou_membro(residencia_id)`. Criar/entrar só via RPC (`criar_residencia`, `entrar_residencia`).
 - **Recorrências → lançamentos**: `gerar_mes(res, competencia)` é idempotente e chamada ao abrir o mês. Variável: previsto = média dos últimos `janela_media` valores reais. Editar/excluir recorrência apaga lançamentos futuros intocados (trigger `limpar_futuros`), regerados no próximo `gerar_mes`.
+- **Importação (etapa 2)**: parsers rodam no navegador em `src/lib/importacao/` (contas correntes BB e Caixa em OFX — a Caixa grava valores como "-12.856.13", ver `valorOFX`; fatura do cartão Caixa em PDF via pdf.js carregado sob demanda). `previa.ts` monta os itens (normalização, meio, natureza, regra, hash de deduplicação `unique(conta_id, hash)`), sugere conciliação e projeta parcelas. Depois de gravar, a RPC `conciliar_importacao` neutraliza transferências entre contas, aplica a fatura do cartão (competência = mês do vencimento), liga o pagamento de fatura e baixa os lançamentos. `desfazer_importacao` reverte.
+- Fatura do cartão = recorrência variável ligada em `contas.recorrencia_id`. Na análise (`v_gastos_categoria`) ela é substituída pelos itens da fatura, para não contar em dobro.
+- Regras (`regras`): o padrão mais longo contido em `descricao_norm` define categoria/natureza/recorrência. São criadas pelo usuário ao classificar (`lembrarRegra`).
+- Amostras reais de extratos/faturas ficam em `amostras/` (fora do git); testes em `src/lib/importacao/*.test.ts`.
 - Datas como string `YYYY-MM-DD`; competência sempre dia 01. Helpers em `src/lib/format.ts`.
 
 ## Convenções
@@ -22,5 +27,5 @@ App de finanças da residência (PWA mobile-first). SvelteKit 3 + Svelte 5 (rune
 
 ## Roadmap
 1. ✅ Recorrências e controle mensal
-2. Importar faturas de cartão e classificar gastos por perfil (fatura = recorrência variável "Cartão de crédito")
+2. ✅ Importação (OFX BB/Caixa, fatura PDF Caixa), classificação por regras, conciliação e análise
 3. Investimentos, patrimônio e cenários
