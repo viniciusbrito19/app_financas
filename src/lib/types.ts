@@ -38,6 +38,8 @@ export interface Recorrencia {
 	inicio: string;
 	fim: string | null;
 	ativo: boolean;
+	/** paga em várias vezes no mês: só quita quando a soma atinge o previsto */
+	acumula: boolean;
 }
 
 export interface Lancamento {
@@ -106,5 +108,6 @@ export interface Transacao {
 	parcela: number | null;
 	parcelas: number | null;
 	projetada: boolean;
+	nota: string | null;
 	hash: string;
 }

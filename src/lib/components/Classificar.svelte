@@ -5,13 +5,13 @@
 	import type { Lancamento, Natureza } from '#lib/types.ts';
 	import { untrack } from 'svelte';
 
-	type T = { descricao: string; descricao_norm: string; valor: number; data: string; categoria_id: string | null; natureza: Natureza; lancamento_id: string | null };
+	type T = { descricao: string; descricao_norm: string; valor: number; data: string; categoria_id: string | null; natureza: Natureza; lancamento_id: string | null; nota: string | null };
 
 	let {
 		t,
 		lancs,
 		onsalvar
-	}: { t: T; lancs?: Lancamento[]; onsalvar: (v: Pick<T, 'categoria_id' | 'natureza' | 'lancamento_id'>, padrao: string | null) => void } = $props();
+	}: { t: T; lancs?: Lancamento[]; onsalvar: (v: Pick<T, 'categoria_id' | 'natureza' | 'lancamento_id' | 'nota'>, padrao: string | null) => void } = $props();
 
 	// edição local (cópia dos valores iniciais); só aplica ao salvar
 	// sem categoria própria, herda a do lançamento já conciliado (ex.: sugestão)
@@ -19,7 +19,8 @@
 		untrack(() => ({
 			categoria_id: t.categoria_id ?? lancs?.find((l) => l.id === t.lancamento_id)?.categoria_id ?? null,
 			natureza: t.natureza,
-			lancamento_id: t.lancamento_id
+			lancamento_id: t.lancamento_id,
+			nota: t.nota
 		}))
 	);
 	let lembrar = $state(true);
@@ -36,7 +37,7 @@
 
 	function salvar(e: SubmitEvent) {
 		e.preventDefault();
-		onsalvar(f, lembrar && padrao.trim() ? padrao.trim().toUpperCase() : null);
+		onsalvar({ ...f, nota: f.nota?.trim() || null }, lembrar && padrao.trim() ? padrao.trim().toUpperCase() : null);
 	}
 </script>
 
@@ -69,6 +70,10 @@
 			</select>
 		</div>
 	{/if}
+	<div>
+		<label class="label" for="nota">Anotação</label>
+		<textarea id="nota" class="input h-auto py-2" rows="2" maxlength="300" placeholder="Ex.: presente aniversário da Ana, conserto da máquina…" bind:value={f.nota}></textarea>
+	</div>
 	<label class="flex items-center gap-3 rounded-xl bg-zinc-100 px-3 py-3 dark:bg-zinc-800">
 		<input type="checkbox" class="size-5 accent-brand" bind:checked={lembrar} />
 		<span class="font-medium">Lembrar para as próximas</span>

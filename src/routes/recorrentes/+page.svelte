@@ -38,14 +38,15 @@
 		dia_vencimento: 10,
 		inicio: '',
 		fim: '',
-		ativo: true
+		ativo: true,
+		acumula: false
 	});
 
 	function abrir(r: Recorrencia | null) {
 		atual = r;
 		f = r
 			? { ...r, valor: valorInput(r.valor_base), inicio: r.inicio.slice(0, 7), fim: r.fim?.slice(0, 7) ?? '' }
-			: { tipo: 'despesa', descricao: '', categoria_id: null, membro_id: null, modo_valor: 'fixo', valor: '', janela_media: 3, dia_vencimento: 10, inicio: mesAtual().slice(0, 7), fim: '', ativo: true };
+			: { tipo: 'despesa', descricao: '', categoria_id: null, membro_id: null, modo_valor: 'fixo', valor: '', janela_media: 3, dia_vencimento: 10, inicio: mesAtual().slice(0, 7), fim: '', ativo: true, acumula: false };
 		aberto = true;
 	}
 
@@ -61,6 +62,7 @@
 			janela_media: resto.janela_media,
 			dia_vencimento: resto.dia_vencimento,
 			ativo: resto.ativo,
+			acumula: resto.acumula,
 			valor_base: parseValor(valor),
 			inicio: inicio + '-01',
 			fim: fim ? fim + '-01' : null
@@ -100,6 +102,7 @@
 							<p class="text-xs text-zinc-500">
 								Dia {r.dia_vencimento} · {r.modo_valor === 'fixo' ? 'Fixo' : `Variável (média ${r.janela_media}m)`}
 								{#if r.membro_id}· {membro(r.membro_id)?.nome}{/if}
+								{#if r.acumula}· várias vezes{/if}
 								{#if !r.ativo}· Inativa{/if}
 							</p>
 						</div>
@@ -149,6 +152,13 @@
 				<input id="fim" class="input" type="month" bind:value={f.fim} />
 			</div>
 		</div>
+		<label class="flex items-center justify-between gap-3 rounded-xl bg-zinc-100 px-3 py-3 dark:bg-zinc-800">
+			<span>
+				<span class="block font-medium">Paga em várias vezes no mês</span>
+				<span class="block text-xs text-zinc-500">Ex.: faxina paga com saques. Só fica paga quando a soma atinge o previsto.</span>
+			</span>
+			<input type="checkbox" class="size-5 shrink-0 accent-brand" bind:checked={f.acumula} />
+		</label>
 		{#if atual}
 			<label class="flex items-center justify-between rounded-xl bg-zinc-100 px-3 py-3 dark:bg-zinc-800">
 				<span class="font-medium">Ativa</span>

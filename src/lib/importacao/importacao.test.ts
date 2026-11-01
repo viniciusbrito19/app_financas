@@ -115,6 +115,31 @@ describe('prévia', () => {
 		expect('categoriaHerdada' in paraLinha(itens[0])).toBe(false);
 	});
 
+	it('recorrência paga em várias vezes recebe todos os saques pela regra', () => {
+		const regraSaque: Regra = { id: 'g3', residencia_id: 'r', padrao: 'SAQUE DINHEIRO', categoria_id: null, natureza: null, recorrencia_id: 'rec-fax' };
+		const saques = [
+			{ data: '2026-10-01', valor: -540, descricao: 'Saque dinheiro ATM cartao 01/10 13:07 SEC.ORC.UNIAO-DF' },
+			{ data: '2026-10-12', valor: -200, descricao: 'Saque dinheiro ATM cartao 12/10 10:00 SEC.ORC.UNIAO-DF' },
+			{ data: '2026-10-23', valor: -360, descricao: 'Saque dinheiro ATM cartao 23/10 14:48 SEC.ORC.UNIAO-DF' }
+		];
+		const faxina = lanc({ id: 'fax', recorrencia_id: 'rec-fax', valor_previsto: 600, vencimento: '2026-10-10' });
+
+		const itens = montarItens(saques, conta, [regraSaque]);
+		sugerirConciliacao(itens, [faxina], conta, (id) => id === 'rec-fax');
+		expect(itens.map((i) => i.lancamento_id)).toEqual(['fax', 'fax', 'fax']);
+
+		// sem "acumula", só o primeiro saque é ligado
+		const comuns = montarItens(saques, conta, [regraSaque]);
+		sugerirConciliacao(comuns, [faxina], conta);
+		expect(comuns.map((i) => i.lancamento_id)).toEqual(['fax', null, null]);
+	});
+
+	it('sugestão por valor ignora recorrências pagas em várias vezes', () => {
+		const itens = montarItens([{ data: '2026-10-10', valor: -600, descricao: 'Pix Enviado Fulano' }], conta, []);
+		sugerirConciliacao(itens, [lanc({ id: 'fax', recorrencia_id: 'rec-fax', valor_previsto: 600 })], conta, () => true);
+		expect(itens[0].lancamento_id).toBeNull();
+	});
+
 	it('projeta parcelas restantes', () => {
 		const cartao: Conta = { ...conta, tipo: 'cartao' };
 		const [it] = montarItens([{ data: '2026-09-20', valor: -300, descricao: 'LOJA PARC 03/05', parcela: 3, parcelas: 5 }], cartao, [], '2026-11-01');

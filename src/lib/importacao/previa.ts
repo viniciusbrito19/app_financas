@@ -35,6 +35,7 @@ export function montarItens(brutas: Bruta[], conta: Conta, regras: Regra[], comp
 			parcela: b.parcela ?? null,
 			parcelas: b.parcelas ?? null,
 			projetada: false,
+			nota: null,
 			hash: b.id ?? `${chave}|${n}`
 		};
 		return aplicarRegra(it, regras);
@@ -55,13 +56,15 @@ export function aplicarRegra(it: Item, regras: Regra[]): Item {
  * Liga itens de conta corrente a lançamentos previstos: primeiro pela recorrência da regra,
  * depois por sugestão (mesmo tipo, valor ±10%, vencimento ±5 dias). As sugestões são atribuídas
  * pelo melhor encaixe global (menor diferença de valor, depois de data), cada lançamento uma vez.
+ * Recorrências que `acumula` (pagas em várias vezes, ex.: faxina em saques) recebem vários itens,
+ * mas só pela regra: valor parcial não casa com o previsto, então ficam fora da sugestão.
  */
-export function sugerirConciliacao(itens: Item[], lancs: Lancamento[], conta: Conta) {
+export function sugerirConciliacao(itens: Item[], lancs: Lancamento[], conta: Conta, acumula: (recorrenciaId: string) => boolean = () => false) {
 	if (conta.tipo === 'cartao') return;
 	const usados = new Set<string>();
-	const candidatos: { it: Item; l: Lancamento; nota: number }[] = [];
+	const candidatos: { it: Item; l: Lancamento; peso: number }[] = [];
 	const ligar = (it: Item, l: Lancamento, sugerido: boolean) => {
-		usados.add(l.id);
+		if (!acumula(l.recorrencia_id!)) usados.add(l.id);
 		it.lancamento_id = l.id;
 		it.sugerido = sugerido;
 		if (!it.categoria_id && l.categoria_id) {
@@ -84,13 +87,13 @@ export function sugerirConciliacao(itens: Item[], lancs: Lancamento[], conta: Co
 			continue;
 		}
 		for (const l of lancs) {
-			if (l.status !== 'previsto' || !l.recorrencia_id || l.tipo !== (it.valor < 0 ? 'despesa' : 'receita')) continue;
+			if (l.status !== 'previsto' || !l.recorrencia_id || acumula(l.recorrencia_id) || l.tipo !== (it.valor < 0 ? 'despesa' : 'receita')) continue;
 			const difValor = Math.abs(Math.abs(it.valor) - l.valor_previsto) / (l.valor_previsto || 1);
 			const difDias = Math.abs(dias(l.vencimento) - dias(it.data));
-			if (difValor <= 0.1 && difDias <= 5) candidatos.push({ it, l, nota: difValor + difDias / 1000 });
+			if (difValor <= 0.1 && difDias <= 5) candidatos.push({ it, l, peso: difValor + difDias / 1000 });
 		}
 	}
-	for (const { it, l } of candidatos.sort((a, b) => a.nota - b.nota)) {
+	for (const { it, l } of candidatos.sort((a, b) => a.peso - b.peso)) {
 		if (!it.lancamento_id && !usados.has(l.id)) ligar(it, l, true);
 	}
 }

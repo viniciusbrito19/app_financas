@@ -134,7 +134,10 @@
 					<button class="flex w-full items-center gap-2 py-2.5 text-left text-sm" onclick={() => (reclass = t)}>
 						<span class="w-11 shrink-0 text-xs text-zinc-500">{dataCurta(t.data)}</span>
 						<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
-						<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
+						<span class="min-w-0 flex-1">
+							<span class="block truncate">{t.descricao}</span>
+							{#if t.nota}<span class="block truncate text-xs text-zinc-500 italic">📝 {t.nota}</span>{/if}
+						</span>
 						<span class="tabular-nums">{brl(-t.valor)}</span>
 					</button>
 				</li>

@@ -59,9 +59,17 @@
 		carregar(app.mes);
 	});
 
-	/** Melhor valor conhecido: o real, se informado; senão o previsto. */
-	const valor = (l: Lancamento) => Number(l.valor_real ?? l.valor_previsto);
+	/** Recorrência paga em várias vezes (ex.: faxina em saques) ainda sem atingir o previsto. */
+	const parcial = (l: Lancamento) =>
+		l.status !== 'pago' && l.valor_real != null && !!app.recs.find((r) => r.id === l.recorrencia_id)?.acumula;
+
+	/** Melhor valor conhecido: o real, se informado; senão o previsto. Parcial: o maior dos dois. */
+	const valor = (l: Lancamento) =>
+		parcial(l) ? Math.max(Number(l.valor_real), Number(l.valor_previsto)) : Number(l.valor_real ?? l.valor_previsto);
 	const soma = (ls: Lancamento[]) => ls.reduce((s, l) => s + valor(l), 0);
+	/** Quanto já saiu/entrou: pagos inteiros + o realizado dos parciais. */
+	const somaPaga = (ls: Lancamento[]) =>
+		ls.reduce((s, l) => s + (l.status === 'pago' ? valor(l) : parcial(l) ? Number(l.valor_real) : 0), 0);
 
 	const grupos = $derived(
 		(['receita', 'despesa'] as Tipo[]).map((tipo) => {
@@ -70,7 +78,7 @@
 				.sort((a, b) => +(a.status === 'pago') - +(b.status === 'pago') || a.vencimento.localeCompare(b.vencimento));
 			// importados não previstos já são realizados: entram no total e no pago
 			const extra = outros.filter((t) => (tipo === 'receita' ? t.valor > 0 : t.valor < 0)).reduce((s, t) => s + Math.abs(t.valor), 0);
-			return { tipo, ls, total: soma(ls) + extra, pago: soma(ls.filter((l) => l.status === 'pago')) + extra };
+			return { tipo, ls, total: soma(ls) + extra, pago: somaPaga(ls) + extra };
 		})
 	);
 	const [rec, desp] = $derived(grupos);
@@ -78,13 +86,14 @@
 	function situacao(l: Lancamento) {
 		if (l.status === 'pago')
 			return { txt: `${l.tipo === 'receita' ? 'Recebido' : 'Pago'} ${dataCurta(l.pago_em ?? l.vencimento)}`, cls: 'bg-emerald-500/15 text-emerald-600' };
+		if (parcial(l)) return { txt: `Parcial ${brl(l.valor_real)} de ${brl(l.valor_previsto)}`, cls: 'bg-amber-500/15 text-amber-600' };
 		if (l.vencimento < hoje()) return { txt: 'Atrasado', cls: 'bg-rose-500/15 text-rose-600' };
 		return { txt: `Vence ${dataCurta(l.vencimento)}`, cls: 'bg-zinc-500/15 text-zinc-500' };
 	}
 
 	/** Diferença real x previsto (só para recorrentes com valor real informado). */
 	function desvio(l: Lancamento) {
-		if (!l.recorrencia_id || l.valor_real == null || !l.valor_previsto) return null;
+		if (!l.recorrencia_id || l.valor_real == null || !l.valor_previsto || parcial(l)) return null;
 		const pct = Math.round(((l.valor_real - l.valor_previsto) / l.valor_previsto) * 100);
 		if (pct === 0) return null;
 		const ruim = l.tipo === 'despesa' ? pct > 0 : pct < 0;
@@ -246,6 +255,11 @@
 									{#if d}<span class={d.cls}>{d.txt}</span>{/if}
 									{#if conciliado(l)}<span title="Conciliado com extrato/fatura">🔗</span>{/if}
 								</p>
+								{#if parcial(l)}
+									<div class="mt-1.5 h-1 rounded-full bg-zinc-200 dark:bg-zinc-700">
+										<div class="h-full rounded-full bg-amber-500" style:width="{Math.min(100, (Number(l.valor_real) / Number(l.valor_previsto)) * 100)}%"></div>
+									</div>
+								{/if}
 							</div>
 							<div class="text-right">
 								<p class="font-semibold tabular-nums {l.tipo === 'receita' ? 'text-receita' : ''}">{brl(valor(l))}</p>
@@ -286,14 +300,8 @@
 
 	{#if outrasReceitas.length}
 		<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">Outras entradas</h2>
-		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
-			{#each outrasReceitas as t (t.id)}
-				<li class="flex items-center gap-2 px-3 py-2.5 text-sm">
-					<span class="w-11 text-xs text-zinc-500">{dataCurta(t.data)}</span>
-					<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
-					<span class="font-semibold text-receita tabular-nums">{brl(t.valor)}</span>
-				</li>
-			{/each}
+		<ul class="card divide-y divide-zinc-100 px-3 py-1 dark:divide-zinc-800">
+			{#each outrasReceitas as t (t.id)}{@render itemTransacao(t)}{/each}
 		</ul>
 	{/if}
 {/if}
@@ -305,8 +313,11 @@
 		<button type="button" class="flex w-full items-center gap-2 py-1.5 text-left text-sm" onclick={() => (reclass = t)}>
 			<span class="w-11 shrink-0 text-xs text-zinc-500">{dataCurta(t.data)}</span>
 			<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
-			<span class="min-w-0 flex-1 truncate">{t.descricao}{t.parcela ? ` ${t.parcela}/${t.parcelas}` : ''}</span>
-			<span class="tabular-nums">{brl(-t.valor)}</span>
+			<span class="min-w-0 flex-1">
+				<span class="block truncate">{t.descricao}{t.parcela ? ` ${t.parcela}/${t.parcelas}` : ''}</span>
+				{#if t.nota}<span class="block truncate text-xs text-zinc-500 italic">📝 {t.nota}</span>{/if}
+			</span>
+			<span class="tabular-nums {t.valor > 0 ? 'text-receita' : ''}">{brl(Math.abs(t.valor))}</span>
 		</button>
 	</li>
 {/snippet}

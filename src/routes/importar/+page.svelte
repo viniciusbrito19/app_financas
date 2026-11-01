@@ -25,6 +25,10 @@
 	const competenciaFatura = $derived(leitura?.fatura ? leitura.fatura.vencimento.slice(0, 8) + '01' : undefined);
 	const novos = $derived(itens.filter((i) => !i.duplicada));
 
+	// recorrências pagas em várias vezes (ex.: faxina em saques) aceitam vários itens
+	const acumula = (id: string) => !!app.recs.find((r) => r.id === id)?.acumula;
+	const sugerir = () => conta && sugerirConciliacao(itens, lancs, conta, acumula);
+
 	async function escolher(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
 		arquivo = input.files?.[0] ?? null;
@@ -68,7 +72,7 @@
 		lancs = comps.length
 			? (ok(await sb.from('lancamentos').select('*').eq('residencia_id', app.res!.id).in('competencia', comps).order('vencimento')) as Lancamento[])
 			: [];
-		sugerirConciliacao(itens, lancs, conta!);
+		sugerir();
 	}
 
 	async function confirmar() {
@@ -120,7 +124,7 @@
 		const r = it.regra?.natureza;
 		it.natureza =
 			it.natureza !== 'ignorada' ? 'ignorada' : r && r !== 'ignorada' ? r : cartao ? 'gasto' : naturezaDe(it.descricao_norm, it.valor);
-		if (conta) sugerirConciliacao(itens, lancs, conta);
+		sugerir();
 	}
 
 	async function salvarClassificacao(v: Pick<Item, 'categoria_id' | 'natureza' | 'lancamento_id'>, padrao: string | null) {
@@ -131,7 +135,7 @@
 			await lembrarRegra(padrao, { ...v, recorrencia_id });
 			// reaplica nas linhas da prévia ainda sem categoria
 			for (const i of itens) if (!i.categoria_id && i !== t) aplicarRegra(i, app.regras);
-			if (conta) sugerirConciliacao(itens, lancs, conta);
+			sugerir();
 		}
 		aberto = false;
 	}
@@ -139,6 +143,23 @@
 	// --- fila "a classificar" e histórico ------------------------------------
 	let fila = $state<Transacao[]>([]);
 	let historico = $state<Importacao[]>([]);
+	/** últimas descartadas, para desfazer */
+	let descartadas = $state<Transacao[]>([]);
+
+	/** Descarta da fila: vira "Não contar" (continua gravada para não reaparecer em reimportações). */
+	async function descartar(t: Transacao) {
+		ok(await sb.from('transacoes').update({ natureza: 'ignorada' }).eq('id', t.id));
+		fila = fila.filter((x) => x.id !== t.id);
+		descartadas = [...descartadas, t];
+		await contarPendentes();
+	}
+
+	async function desfazerDescarte() {
+		const ids = descartadas.map((t) => t.id);
+		ok(await sb.from('transacoes').update({ natureza: 'gasto' }).in('id', ids));
+		descartadas = [];
+		await Promise.all([carregarFila(), contarPendentes()]);
+	}
 
 	async function carregarFila() {
 		fila = ok(
@@ -181,6 +202,7 @@
 			<Icone c={cat(t.categoria_id)} />
 			<div class="min-w-0 flex-1">
 				<p class="truncate text-sm font-medium">{t.descricao}</p>
+				{#if t.nota}<p class="truncate text-xs text-zinc-500 italic">📝 {t.nota}</p>{/if}
 				<p class="flex flex-wrap items-center gap-1 text-xs text-zinc-500">
 					<span>{dataCurta(t.data)}</span>
 					<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
@@ -205,6 +227,13 @@
 				onclick={() => alternarContar(t)}
 				aria-label={t.natureza === 'ignorada' ? 'Voltar a contar' : 'Não contar'}
 				title={t.natureza === 'ignorada' ? 'Voltar a contar' : 'Não contar'}>{t.natureza === 'ignorada' ? '↺' : '⊘'}</button
+			>
+		{:else if 'id' in t}
+			<button
+				class="grid size-11 shrink-0 place-items-center text-lg text-zinc-300 dark:text-zinc-600"
+				onclick={() => descartar(t)}
+				aria-label="Descartar (não contar)"
+				title="Descartar (não contar)">⊘</button
 			>
 		{:else}
 			<span class="w-3"></span>
@@ -235,8 +264,16 @@
 		{#if aviso}<p class="text-sm text-receita">{aviso}</p>{/if}
 	</section>
 
+	{#if descartadas.length}
+		<div class="card mt-4 flex items-center justify-between py-3 text-sm">
+			<span>{descartadas.length} {descartadas.length === 1 ? 'transação descartada' : 'transações descartadas'}</span>
+			<button class="font-semibold text-brand" onclick={desfazerDescarte}>Desfazer</button>
+		</div>
+	{/if}
+
 	{#if fila.length}
 		<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">A classificar ({app.pendentes})</h2>
+		<p class="mb-2 px-1 text-xs text-zinc-500">Toque para classificar; ⊘ descarta (não conta nos totais).</p>
 		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
 			{#each fila as t (t.id)}{@render linha(t, () => (filaAlvo = t))}{/each}
 		</ul>
