@@ -1,8 +1,10 @@
 <script lang="ts">
-	import { app, cat, conta as contaDe, contarPendentes, MEIOS, NATUREZAS } from '#lib/app.svelte.ts';
+	import { app, cat, conta as contaDe, contaNoTotal, contarPendentes, MEIOS, NATUREZAS } from '#lib/app.svelte.ts';
 	import Classificar from '#lib/components/Classificar.svelte';
 	import Icone from '#lib/components/Icone.svelte';
+	import Reclassificar from '#lib/components/Reclassificar.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
+	import { naturezaDe } from '#lib/importacao/normalizar.ts';
 	import { brl, dataCurta, mesLabel } from '#lib/format.ts';
 	import { lerArquivo, senhaNecessaria, type Leitura } from '#lib/importacao/ler.ts';
 	import { aplicarRegra, montarItens, paraLinha, projetarParcelas, sugerirConciliacao, type Item } from '#lib/importacao/previa.ts';
@@ -107,18 +109,24 @@
 		arquivo = null;
 	}
 
-	// --- edição de um item (prévia) ou de uma transação gravada (fila) -------
+	// --- edição de um item da prévia ----------------------------------------
 	let aberto = $state(false);
-	let alvo = $state<Item | Transacao | null>(null);
+	let alvo = $state<Item | null>(null);
+	/** transação gravada da fila "a classificar" */
+	let filaAlvo = $state<Transacao | null>(null);
+
+	/** Liga/desliga "não contar" (ex.: resgate automático "BB Rende Fácil"). O item é gravado, mas fica fora dos totais. */
+	function alternarContar(it: Item) {
+		const r = it.regra?.natureza;
+		it.natureza =
+			it.natureza !== 'ignorada' ? 'ignorada' : r && r !== 'ignorada' ? r : cartao ? 'gasto' : naturezaDe(it.descricao_norm, it.valor);
+		if (conta) sugerirConciliacao(itens, lancs, conta);
+	}
 
 	async function salvarClassificacao(v: Pick<Item, 'categoria_id' | 'natureza' | 'lancamento_id'>, padrao: string | null) {
 		const t = alvo!;
 		Object.assign(t, v, { sugerido: false });
 		const recorrencia_id = lancs.find((l) => l.id === v.lancamento_id)?.recorrencia_id;
-		if ('id' in t) {
-			ok(await sb.from('transacoes').update({ categoria_id: v.categoria_id, natureza: v.natureza }).eq('id', t.id));
-			await contarPendentes();
-		}
 		if (padrao) {
 			await lembrarRegra(padrao, { ...v, recorrencia_id });
 			// reaplica nas linhas da prévia ainda sem categoria
@@ -126,7 +134,6 @@
 			if (conta) sugerirConciliacao(itens, lancs, conta);
 		}
 		aberto = false;
-		carregarFila();
 	}
 
 	// --- fila "a classificar" e histórico ------------------------------------
@@ -168,8 +175,9 @@
 </script>
 
 {#snippet linha(t: Item | Transacao, onclick: () => void)}
-	<li>
-		<button class="flex w-full items-center gap-3 px-3 py-3 text-left {'duplicada' in t && t.duplicada ? 'opacity-40' : ''}" {onclick}>
+	{@const fora = ('duplicada' in t && t.duplicada) || !contaNoTotal(t.natureza)}
+	<li class="flex items-center">
+		<button class="flex min-w-0 flex-1 items-center gap-3 py-3 pl-3 text-left {fora ? 'opacity-45' : ''}" {onclick}>
 			<Icone c={cat(t.categoria_id)} />
 			<div class="min-w-0 flex-1">
 				<p class="truncate text-sm font-medium">{t.descricao}</p>
@@ -189,8 +197,18 @@
 					{/if}
 				</p>
 			</div>
-			<p class="text-sm font-semibold tabular-nums {t.valor > 0 ? 'text-receita' : ''}">{brl(t.valor)}</p>
+			<p class="text-sm font-semibold tabular-nums {t.valor > 0 ? 'text-receita' : ''} {fora ? 'line-through' : ''}">{brl(t.valor)}</p>
 		</button>
+		{#if 'duplicada' in t && !t.duplicada}
+			<button
+				class="grid size-11 shrink-0 place-items-center text-lg {t.natureza === 'ignorada' ? 'text-zinc-400' : 'text-zinc-300 dark:text-zinc-600'}"
+				onclick={() => alternarContar(t)}
+				aria-label={t.natureza === 'ignorada' ? 'Voltar a contar' : 'Não contar'}
+				title={t.natureza === 'ignorada' ? 'Voltar a contar' : 'Não contar'}>{t.natureza === 'ignorada' ? '↺' : '⊘'}</button
+			>
+		{:else}
+			<span class="w-3"></span>
+		{/if}
 	</li>
 {/snippet}
 
@@ -220,7 +238,7 @@
 	{#if fila.length}
 		<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">A classificar ({app.pendentes})</h2>
 		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
-			{#each fila as t (t.id)}{@render linha(t, () => ((alvo = t), (aberto = true)))}{/each}
+			{#each fila as t (t.id)}{@render linha(t, () => (filaAlvo = t))}{/each}
 		</ul>
 	{/if}
 
@@ -242,11 +260,14 @@
 		</ul>
 	{/if}
 {:else}
-	{@const saidas = novos.filter((i) => i.valor < 0).reduce((s, i) => s + i.valor, 0)}
-	{@const entradas = novos.filter((i) => i.valor > 0).reduce((s, i) => s + i.valor, 0)}
+	{@const contam = novos.filter((i) => contaNoTotal(i.natureza))}
+	{@const saidas = contam.filter((i) => i.valor < 0).reduce((s, i) => s + i.valor, 0)}
+	{@const entradas = contam.filter((i) => i.valor > 0).reduce((s, i) => s + i.valor, 0)}
 	<section class="card mt-4 space-y-1 text-sm">
 		<p class="font-semibold">{arquivo?.name}</p>
-		<p class="text-zinc-500">{novos.length} novas · {itens.length - novos.length} já importadas</p>
+		<p class="text-zinc-500">
+			{novos.length} novas · {itens.length - novos.length} já importadas · {novos.length - contam.length} não contam (transferências, investimentos, ignoradas)
+		</p>
 		{#if leitura.fatura}
 			{@const soma = -itens.reduce((s, i) => s + i.valor, 0)}
 			<p>Fatura de <b>{mesLabel(competenciaFatura!)}</b> · vence {dataCurta(leitura.fatura.vencimento)} · total <b>{brl(leitura.fatura.total)}</b></p>
@@ -258,7 +279,9 @@
 		{/if}
 	</section>
 
-	<p class="mt-4 mb-2 px-1 text-xs text-zinc-500">Toque num item para ajustar categoria, natureza ou conciliação.</p>
+	<p class="mt-4 mb-2 px-1 text-xs text-zinc-500">
+		Toque num item para ajustar categoria, natureza ou conciliação. Use ⊘ para não contar um item (ele fica riscado); para lembrar nas próximas, escolha a natureza "Não contar" e marque "Lembrar".
+	</p>
 	<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
 		{#each itens as t (t.hash)}{@render linha(t, () => ((alvo = t), (aberto = true)))}{/each}
 	</ul>
@@ -274,6 +297,8 @@
 
 <Sheet bind:open={aberto} title="Classificar">
 	{#if alvo}
-		<Classificar t={alvo} lancs={'id' in alvo || conta?.tipo === 'cartao' ? undefined : lancs.filter((l) => l.competencia === alvo?.competencia)} onsalvar={salvarClassificacao} />
+		<Classificar t={alvo} lancs={cartao ? undefined : lancs.filter((l) => l.competencia === alvo?.competencia)} onsalvar={salvarClassificacao} />
 	{/if}
 </Sheet>
+
+<Reclassificar bind:t={filaAlvo} onfeito={carregarFila} />

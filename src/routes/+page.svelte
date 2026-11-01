@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { app, cat, MEIOS, membro } from '#lib/app.svelte.ts';
+	import { app, cat, contaNoTotal, MEIOS, membro } from '#lib/app.svelte.ts';
 	import CamposBase from '#lib/components/CamposBase.svelte';
 	import Icone from '#lib/components/Icone.svelte';
+	import Reclassificar from '#lib/components/Reclassificar.svelte';
 	import MonthPicker from '#lib/components/MonthPicker.svelte';
 	import Seg from '#lib/components/Seg.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
-	import { brl, dataCurta, hoje, parseValor, valorInput } from '#lib/format.ts';
+	import { addMes, brl, dataCurta, hoje, parseValor, valorInput } from '#lib/format.ts';
 	import { ok, sb } from '#lib/supabase.ts';
 	import type { Lancamento, Tipo, Transacao } from '#lib/types.ts';
 
@@ -106,13 +107,53 @@
 	let atual = $state<Lancamento | null>(null);
 	let f = $state({ tipo: 'despesa' as Tipo, descricao: '', categoria_id: null as string | null, membro_id: null as string | null, valor: '', vencimento: '', status: 'previsto' as Lancamento['status'], pago_em: '' });
 
+	// --- transações vinculadas (ex.: itens da fatura do cartão) por categoria ----
 	let vinculadas = $state<Transacao[]>([]);
+	/** média mensal por categoria dos gastos no cartão nos 3 meses anteriores */
+	let mediaCartao = $state<Record<string, number> | null>(null);
+	let grupoAberto = $state<string | null>(null);
+	/** transação em reclassificação */
+	let reclass = $state<Transacao | null>(null);
+
+	async function carregarVinculadas(l: Lancamento) {
+		const ts = ok(await sb.from('transacoes').select('*').eq('lancamento_id', l.id).order('data')) as Transacao[];
+		mediaCartao = null;
+		if (ts.some((t) => t.meio === 'cartao')) {
+			const hist = ok(
+				await sb
+					.from('v_gastos_categoria')
+					.select('competencia, categoria_id, valor')
+					.eq('residencia_id', app.res!.id)
+					.eq('meio', 'cartao')
+					.gte('competencia', addMes(l.competencia, -3))
+					.lt('competencia', l.competencia)
+			) as { competencia: string; categoria_id: string | null; valor: number }[];
+			const meses = new Set(hist.map((h) => h.competencia)).size;
+			if (meses) {
+				const m: Record<string, number> = {};
+				for (const h of hist) m[h.categoria_id ?? ''] = (m[h.categoria_id ?? ''] ?? 0) + Number(h.valor) / meses;
+				mediaCartao = m;
+			}
+		}
+		vinculadas = ts;
+	}
+
+	const gruposVinculadas = $derived.by(() => {
+		const m = new Map<string, { id: string; ts: Transacao[]; total: number }>();
+		for (const t of vinculadas) {
+			const k = contaNoTotal(t.natureza) ? (t.categoria_id ?? '') : 'fora';
+			const g = m.get(k) ?? m.set(k, { id: k, ts: [], total: 0 }).get(k)!;
+			g.ts.push(t);
+			g.total -= t.valor;
+		}
+		return [...m.values()].sort((a, b) => +(a.id === 'fora') - +(b.id === 'fora') || b.total - a.total);
+	});
 
 	async function abrir(l: L | null) {
 		atual = l;
 		vinculadas = [];
-		if (l && conciliado(l))
-			sb.from('transacoes').select('*').eq('lancamento_id', l.id).order('data').then((r) => (vinculadas = ok(r) as Transacao[]));
+		grupoAberto = null;
+		if (l && conciliado(l)) carregarVinculadas(l);
 		f = l
 			? { ...l, valor: valorInput(l.valor_real ?? l.valor_previsto), pago_em: l.pago_em ?? hoje() }
 			: { tipo: 'despesa', descricao: '', categoria_id: null, membro_id: null, valor: '', vencimento: hoje().startsWith(app.mes.slice(0, 8)) ? hoje() : app.mes, status: 'previsto', pago_em: hoje() };
@@ -235,14 +276,7 @@
 					</button>
 					{#if expandido === g.id}
 						<ul class="bg-zinc-50 px-3 pb-2 dark:bg-zinc-950/40">
-							{#each g.ts as t (t.id)}
-								<li class="flex items-center gap-2 py-1.5 text-sm">
-									<span class="w-11 text-xs text-zinc-500">{dataCurta(t.data)}</span>
-									<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
-									<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
-									<span class="tabular-nums">{brl(-t.valor)}</span>
-								</li>
-							{/each}
+							{#each g.ts as t (t.id)}{@render itemTransacao(t)}{/each}
 						</ul>
 					{/if}
 				</li>
@@ -266,7 +300,46 @@
 
 <button class="fab" onclick={() => abrir(null)} aria-label="Novo lançamento avulso">+</button>
 
+{#snippet itemTransacao(t: Transacao)}
+	<li>
+		<button type="button" class="flex w-full items-center gap-2 py-1.5 text-left text-sm" onclick={() => (reclass = t)}>
+			<span class="w-11 shrink-0 text-xs text-zinc-500">{dataCurta(t.data)}</span>
+			<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
+			<span class="min-w-0 flex-1 truncate">{t.descricao}{t.parcela ? ` ${t.parcela}/${t.parcelas}` : ''}</span>
+			<span class="tabular-nums">{brl(-t.valor)}</span>
+		</button>
+	</li>
+{/snippet}
+
 <Sheet bind:open={aberto} title={atual ? (atual.recorrencia_id ? 'Lançamento recorrente' : 'Editar lançamento') : 'Lançamento avulso'}>
+	{#if vinculadas.length}
+		<div class="mb-4">
+			<p class="label">{vinculadas.length} {vinculadas.length === 1 ? 'transação vinculada' : 'transações vinculadas'} · toque para ver e reclassificar</p>
+			<ul class="divide-y divide-zinc-200 rounded-xl bg-zinc-100 dark:divide-zinc-700 dark:bg-zinc-800">
+				{#each gruposVinculadas as g (g.id)}
+					{@const c = cat(g.id || null)}
+					{@const media = mediaCartao && g.id !== 'fora' ? (mediaCartao[g.id] ?? 0) : null}
+					<li>
+						<button type="button" class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm" onclick={() => (grupoAberto = grupoAberto === g.id ? null : g.id)}>
+							<span class="min-w-0 flex-1 truncate font-medium">
+								{g.id === 'fora' ? '⊘ Não contam' : `${c?.icone ?? '•'} ${c?.nome ?? 'Sem categoria'}`}
+								<span class="text-xs font-normal text-zinc-500">({g.ts.length})</span>
+							</span>
+							{#if media !== null}
+								<span class="text-xs {g.total > media * 1.2 && g.total - media > 50 ? 'text-rose-600' : 'text-zinc-500'}">média {brl(media)}</span>
+							{/if}
+							<span class="font-semibold tabular-nums">{brl(g.total)}</span>
+						</button>
+						{#if grupoAberto === g.id}
+							<ul class="px-3 pb-2">
+								{#each g.ts as t (t.id)}{@render itemTransacao(t)}{/each}
+							</ul>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
 	<form class="space-y-4" onsubmit={salvar}>
 		<CamposBase bind:f />
 		<div class="grid grid-cols-2 gap-3">
@@ -287,23 +360,18 @@
 				<input id="pagoem" class="input" type="date" bind:value={f.pago_em} />
 			</div>
 		{/if}
-		{#if vinculadas.length}
-			<div>
-				<p class="label">Conciliado com {vinculadas.length} {vinculadas.length === 1 ? 'transação' : 'transações'}</p>
-				<ul class="max-h-60 divide-y divide-zinc-100 overflow-y-auto rounded-xl bg-zinc-100 px-3 dark:divide-zinc-700 dark:bg-zinc-800">
-					{#each vinculadas as t (t.id)}
-						<li class="flex items-center gap-2 py-2 text-sm">
-							<span class="w-11 text-xs text-zinc-500">{dataCurta(t.data)}</span>
-							<span class="min-w-0 flex-1 truncate">{cat(t.categoria_id)?.icone ?? ''} {t.descricao}</span>
-							<span class="tabular-nums">{brl(-t.valor)}</span>
-						</li>
-					{/each}
-				</ul>
-			</div>
-		{/if}
 		<button class="btn btn-primary w-full">Salvar</button>
 		{#if atual && !atual.recorrencia_id}
 			<button type="button" class="btn w-full text-despesa" onclick={excluir}>Excluir</button>
 		{/if}
 	</form>
 </Sheet>
+
+<!-- reclassificar uma transação (itens da fatura ou "Outros gastos") -->
+<Reclassificar
+	bind:t={reclass}
+	onfeito={() => {
+		carregar();
+		if (aberto && atual) carregarVinculadas(atual);
+	}}
+/>

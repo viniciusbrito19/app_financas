@@ -41,7 +41,7 @@
 		</div>
 		<div>
 			<label class="label" for="cat">Categoria</label>
-			<select id="cat" class="input" bind:value={f.categoria_id} disabled={f.natureza === 'transferencia'}>
+			<select id="cat" class="input" bind:value={f.categoria_id} disabled={f.natureza === 'transferencia' || f.natureza === 'ignorada'}>
 				<option value={null}>Sem categoria</option>
 				{#each cats as c (c.id)}<option value={c.id}>{c.icone} {c.nome}</option>{/each}
 			</select>

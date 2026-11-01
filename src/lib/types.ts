@@ -57,7 +57,7 @@ export interface Lancamento {
 }
 
 export type Meio = 'pix' | 'debito' | 'cartao' | 'boleto' | 'transferencia' | 'tarifa' | 'outro';
-export type Natureza = 'gasto' | 'receita' | 'transferencia' | 'pagamento_fatura';
+export type Natureza = 'gasto' | 'receita' | 'transferencia' | 'pagamento_fatura' | 'ignorada';
 
 export interface Conta {
 	id: string;

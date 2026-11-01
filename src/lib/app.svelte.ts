@@ -1,7 +1,7 @@
 import type { User } from '@supabase/supabase-js';
 import { mesAtual } from './format.ts';
 import { ok, sb } from './supabase.ts';
-import type { Categoria, Conta, Membro, Recorrencia, Regra, Residencia } from './types.ts';
+import type { Categoria, Conta, Membro, Natureza, Recorrencia, Regra, Residencia } from './types.ts';
 
 /** Estado global da sessão: usuário, residência ativa e cadastros auxiliares. */
 export const app = $state({
@@ -63,4 +63,6 @@ export const membro = (id: string | null) => app.membros.find((m) => m.id === id
 export const conta = (id: string | null) => app.contas.find((c) => c.id === id);
 
 export const MEIOS = { pix: 'Pix', debito: 'Débito', cartao: 'Cartão', boleto: 'Boleto', transferencia: 'Transf.', tarifa: 'Tarifa', outro: 'Outro', manual: 'Manual' } as const;
-export const NATUREZAS = { gasto: 'Gasto', receita: 'Receita', transferencia: 'Transferência', pagamento_fatura: 'Pag. fatura' } as const;
+export const NATUREZAS = { gasto: 'Gasto', receita: 'Receita', transferencia: 'Transferência', pagamento_fatura: 'Pag. fatura', ignorada: 'Não contar' } as const;
+/** naturezas que entram em totais e análise */
+export const contaNoTotal = (n: Natureza) => n === 'gasto' || n === 'receita';

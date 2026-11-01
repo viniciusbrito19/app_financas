@@ -61,7 +61,7 @@ export function sugerirConciliacao(itens: Item[], lancs: Lancamento[], conta: Co
 	for (const it of itens) {
 		it.lancamento_id = null;
 		it.sugerido = false;
-		if (it.duplicada || it.natureza === 'transferencia' || it.natureza === 'pagamento_fatura') continue;
+		if (it.duplicada || (it.natureza !== 'gasto' && it.natureza !== 'receita')) continue;
 		const recId = it.regra?.recorrencia_id;
 		if (recId) {
 			const l = lancs.find((l) => l.recorrencia_id === recId && l.competencia === it.competencia && !usados.has(l.id));

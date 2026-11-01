@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { app, cat, MEIOS } from '#lib/app.svelte.ts';
 	import Icone from '#lib/components/Icone.svelte';
+	import Reclassificar from '#lib/components/Reclassificar.svelte';
 	import MonthPicker from '#lib/components/MonthPicker.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
 	import { addMes, brl, dataCurta } from '#lib/format.ts';
@@ -57,6 +58,7 @@
 
 	// --- detalhe de uma categoria ------------------------------------------
 	let aberto = $state(false);
+	let reclass = $state<Transacao | null>(null);
 	let detalhe = $state<{ id: string | null; ts: Transacao[] }>({ id: null, ts: [] });
 
 	async function abrir(id: string | null) {
@@ -128,15 +130,26 @@
 	{#if detalhe.ts.length}
 		<ul class="divide-y divide-zinc-100 dark:divide-zinc-800">
 			{#each detalhe.ts as t (t.id)}
-				<li class="flex items-center gap-2 py-2.5 text-sm">
-					<span class="w-11 text-xs text-zinc-500">{dataCurta(t.data)}</span>
-					<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
-					<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
-					<span class="tabular-nums">{brl(-t.valor)}</span>
+				<li>
+					<button class="flex w-full items-center gap-2 py-2.5 text-left text-sm" onclick={() => (reclass = t)}>
+						<span class="w-11 shrink-0 text-xs text-zinc-500">{dataCurta(t.data)}</span>
+						<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
+						<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
+						<span class="tabular-nums">{brl(-t.valor)}</span>
+					</button>
 				</li>
 			{/each}
 		</ul>
+		<p class="mt-3 text-xs text-zinc-500">Toque numa transação para corrigir a categoria ou marcá-la como "Não contar".</p>
 	{:else}
 		<p class="text-sm text-zinc-500">Sem transações importadas nesta categoria (valores podem vir de lançamentos pagos manualmente).</p>
 	{/if}
 </Sheet>
+
+<Reclassificar
+	bind:t={reclass}
+	onfeito={() => {
+		carregar(app.mes);
+		abrir(detalhe.id);
+	}}
+/>
