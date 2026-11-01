@@ -36,9 +36,16 @@ export async function lembrarRegra(padrao: string, t: Classificacao, sobrescreve
 	return r;
 }
 
-/** Corrige a classificação de uma transação já gravada (e, com padrão, das semelhantes). */
-export async function reclassificar(t: Transacao, v: Classificacao, padrao: string | null) {
+/**
+ * Corrige a classificação de uma transação já gravada (e, com padrão, das semelhantes).
+ * Com `lancamento_id` informado, também troca a conciliação (o lançamento anterior é reaberto).
+ */
+export async function reclassificar(t: Transacao, v: Classificacao & { lancamento_id?: string | null }, padrao: string | null) {
 	ok(await sb.from('transacoes').update({ categoria_id: v.categoria_id, natureza: v.natureza }).eq('id', t.id));
+	if (v.lancamento_id !== undefined && v.lancamento_id !== t.lancamento_id) {
+		ok(await sb.rpc('vincular_transacao', { p_tx: t.id, p_lanc: v.lancamento_id }));
+		t.lancamento_id = v.lancamento_id;
+	}
 	Object.assign(t, { categoria_id: v.categoria_id, natureza: v.natureza });
 	if (padrao) await lembrarRegra(padrao, v, true);
 	else await contarPendentes();

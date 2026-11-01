@@ -125,7 +125,7 @@
 
 	async function salvarClassificacao(v: Pick<Item, 'categoria_id' | 'natureza' | 'lancamento_id'>, padrao: string | null) {
 		const t = alvo!;
-		Object.assign(t, v, { sugerido: false });
+		Object.assign(t, v, { sugerido: false, categoriaHerdada: false });
 		const recorrencia_id = lancs.find((l) => l.id === v.lancamento_id)?.recorrencia_id;
 		if (padrao) {
 			await lembrarRegra(padrao, { ...v, recorrencia_id });

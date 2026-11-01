@@ -8,6 +8,8 @@ export type Item = Omit<Transacao, 'id' | 'residencia_id' | 'importacao_id'> & {
 	regra?: Regra;
 	sugerido?: boolean;
 	duplicada?: boolean;
+	/** categoria veio do lançamento conciliado (é desfeita se a conciliação mudar) */
+	categoriaHerdada?: boolean;
 };
 
 /** Converte linhas cruas em itens classificados. Cartão: competência = mês do vencimento da fatura. */
@@ -58,17 +60,27 @@ export function sugerirConciliacao(itens: Item[], lancs: Lancamento[], conta: Co
 	if (conta.tipo === 'cartao') return;
 	const usados = new Set<string>();
 	const candidatos: { it: Item; l: Lancamento; nota: number }[] = [];
+	const ligar = (it: Item, l: Lancamento, sugerido: boolean) => {
+		usados.add(l.id);
+		it.lancamento_id = l.id;
+		it.sugerido = sugerido;
+		if (!it.categoria_id && l.categoria_id) {
+			it.categoria_id = l.categoria_id;
+			it.categoriaHerdada = true;
+		}
+	};
 	for (const it of itens) {
 		it.lancamento_id = null;
 		it.sugerido = false;
+		if (it.categoriaHerdada) {
+			it.categoria_id = null;
+			it.categoriaHerdada = false;
+		}
 		if (it.duplicada || (it.natureza !== 'gasto' && it.natureza !== 'receita')) continue;
 		const recId = it.regra?.recorrencia_id;
 		if (recId) {
 			const l = lancs.find((l) => l.recorrencia_id === recId && l.competencia === it.competencia && !usados.has(l.id));
-			if (l) {
-				usados.add(l.id);
-				it.lancamento_id = l.id;
-			}
+			if (l) ligar(it, l, false);
 			continue;
 		}
 		for (const l of lancs) {
@@ -79,10 +91,7 @@ export function sugerirConciliacao(itens: Item[], lancs: Lancamento[], conta: Co
 		}
 	}
 	for (const { it, l } of candidatos.sort((a, b) => a.nota - b.nota)) {
-		if (it.lancamento_id || usados.has(l.id)) continue;
-		usados.add(l.id);
-		it.lancamento_id = l.id;
-		it.sugerido = true;
+		if (!it.lancamento_id && !usados.has(l.id)) ligar(it, l, true);
 	}
 }
 
@@ -103,6 +112,6 @@ export function projetarParcelas(itens: Item[]): Item[] {
 }
 
 /** Campos gravados em `transacoes`. */
-export const paraLinha = ({ regra, sugerido, duplicada, ...t }: Item) => t;
+export const paraLinha = ({ regra, sugerido, duplicada, categoriaHerdada, ...t }: Item) => t;
 
 const dias = (d: string) => Date.parse(d + 'T00:00:00Z') / 864e5;

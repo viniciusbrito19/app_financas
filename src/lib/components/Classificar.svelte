@@ -14,12 +14,25 @@
 	}: { t: T; lancs?: Lancamento[]; onsalvar: (v: Pick<T, 'categoria_id' | 'natureza' | 'lancamento_id'>, padrao: string | null) => void } = $props();
 
 	// edição local (cópia dos valores iniciais); só aplica ao salvar
-	let f = $state(untrack(() => ({ categoria_id: t.categoria_id, natureza: t.natureza, lancamento_id: t.lancamento_id })));
+	// sem categoria própria, herda a do lançamento já conciliado (ex.: sugestão)
+	let f = $state(
+		untrack(() => ({
+			categoria_id: t.categoria_id ?? lancs?.find((l) => l.id === t.lancamento_id)?.categoria_id ?? null,
+			natureza: t.natureza,
+			lancamento_id: t.lancamento_id
+		}))
+	);
 	let lembrar = $state(true);
 	let padrao = $state(untrack(() => t.descricao_norm));
 
 	const cats = $derived(app.cats.filter((c) => c.tipo === (f.natureza === 'receita' ? 'receita' : 'despesa')));
 	const opcoes = $derived((lancs ?? []).filter((l) => l.tipo === (t.valor < 0 ? 'despesa' : 'receita')));
+
+	/** Ao conciliar com um lançamento recorrente, usa a categoria dele. */
+	function herdarCategoria() {
+		const c = opcoes.find((l) => l.id === f.lancamento_id)?.categoria_id;
+		if (c) f.categoria_id = c;
+	}
 
 	function salvar(e: SubmitEvent) {
 		e.preventDefault();
@@ -50,7 +63,7 @@
 	{#if lancs}
 		<div>
 			<label class="label" for="lanc">Conciliar com lançamento previsto</label>
-			<select id="lanc" class="input" bind:value={f.lancamento_id}>
+			<select id="lanc" class="input" bind:value={f.lancamento_id} onchange={herdarCategoria}>
 				<option value={null}>Nenhum (gasto não previsto)</option>
 				{#each opcoes as l (l.id)}<option value={l.id}>{l.descricao} · {dataCurta(l.vencimento)} · {brl(l.valor_real ?? l.valor_previsto)}</option>{/each}
 			</select>

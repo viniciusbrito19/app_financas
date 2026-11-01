@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Conta, Lancamento, Regra } from '../types.ts';
 import { meioDe, naturezaDe, normalizar } from './normalizar.ts';
 import { parseOFX, valorOFX } from './ofx.ts';
-import { montarItens, projetarParcelas, sugerirConciliacao } from './previa.ts';
+import { montarItens, paraLinha, projetarParcelas, sugerirConciliacao } from './previa.ts';
 
 const conta: Conta = { id: 'c1', residencia_id: 'r', nome: 'BB', tipo: 'corrente', banco: 'bb', membro_id: null, recorrencia_id: null };
 
@@ -103,6 +103,16 @@ describe('prévia', () => {
 		);
 		sugerirConciliacao(itens, [lanc({ id: 'escola', valor_previsto: 2521.74, vencimento: '2026-10-05' }), lanc({ id: 'dizimo', valor_previsto: 2600, vencimento: '2026-10-05' })], conta);
 		expect(itens.map((i) => i.lancamento_id)).toEqual(['dizimo', 'escola']);
+	});
+
+	it('item conciliado sem categoria herda a do lançamento (e perde se a conciliação sair)', () => {
+		const itens = montarItens([{ data: '2026-10-28', valor: -325.43, descricao: 'Pagto Energia Eletrica Neoenergia' }], conta, []);
+		const luz = lanc({ id: 'luz', categoria_id: 'energia', valor_previsto: 300, vencimento: '2026-10-25' });
+		sugerirConciliacao(itens, [luz], conta);
+		expect(itens[0]).toMatchObject({ lancamento_id: 'luz', categoria_id: 'energia' });
+		sugerirConciliacao(itens, [], conta);
+		expect(itens[0]).toMatchObject({ lancamento_id: null, categoria_id: null });
+		expect('categoriaHerdada' in paraLinha(itens[0])).toBe(false);
 	});
 
 	it('projeta parcelas restantes', () => {
