@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, cat, MEIOS } from '#lib/app.svelte.ts';
+	import { app, cat, conta, MEIOS, membro } from '#lib/app.svelte.ts';
 	import Icone from '#lib/components/Icone.svelte';
 	import Reclassificar from '#lib/components/Reclassificar.svelte';
 	import MonthPicker from '#lib/components/MonthPicker.svelte';
@@ -8,7 +8,14 @@
 	import { ok, sb } from '#lib/supabase.ts';
 	import type { Transacao } from '#lib/types.ts';
 
-	type Linha = { competencia: string; categoria_id: string | null; meio: keyof typeof MEIOS; valor: number };
+	type Linha = { competencia: string; categoria_id: string | null; meio: keyof typeof MEIOS; valor: number; membro_id: string | null };
+
+	/** filtro por pessoa: '' = todos, 'casa' = sem titular, ou o id do membro */
+	let pessoa = $state('');
+	const daPessoa = (membroId: string | null) => !pessoa || (pessoa === 'casa' ? !membroId : membroId === pessoa);
+	/** dono de uma transação: pessoa do cartão (final) ou titular da conta */
+	const donoDe = (t: Transacao) =>
+		app.cartoes.find((k) => k.conta_id === t.conta_id && k.final === t.cartao)?.membro_id ?? conta(t.conta_id)?.membro_id ?? null;
 
 	/** Fora do padrão: acima da média dos 3 meses anteriores em mais de 20% e de R$ 50. */
 	const LIMITE_PCT = 0.2;
@@ -21,7 +28,7 @@
 		const dados = ok(
 			await sb
 				.from('v_gastos_categoria')
-				.select('competencia, categoria_id, meio, valor')
+				.select('competencia, categoria_id, meio, valor, membro_id')
 				.eq('residencia_id', app.res!.id)
 				.gte('competencia', addMes(mes, -3))
 				.lte('competencia', mes)
@@ -32,7 +39,8 @@
 		carregar(app.mes);
 	});
 
-	const filtradas = $derived(linhas.filter((l) => !meio || l.meio === meio));
+	const filtradas = $derived(linhas.filter((l) => (!meio || l.meio === meio) && daPessoa(l.membro_id)));
+	const pessoasUsadas = $derived([...new Set(linhas.map((l) => l.membro_id ?? 'casa'))]);
 	const meiosUsados = $derived([...new Set(linhas.map((l) => l.meio))]);
 
 	const categorias = $derived.by(() => {
@@ -74,7 +82,7 @@
 			.order('valor');
 		q = id ? q.eq('categoria_id', id) : q.is('categoria_id', null);
 		if (meio) q = q.eq('meio', meio);
-		detalhe.ts = ok(await q) as Transacao[];
+		detalhe.ts = (ok(await q) as Transacao[]).filter((t) => daPessoa(donoDe(t)));
 	}
 </script>
 
@@ -91,6 +99,15 @@
 		<button class="chip shrink-0 px-3 py-1.5 text-xs {meio === v ? 'bg-brand text-white' : 'bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300'}" onclick={() => (meio = v)}>{r}</button>
 	{/each}
 </div>
+
+{#if pessoasUsadas.length > 1}
+	<!-- por pessoa: dono do cartão (final) ou titular do lançamento/conta -->
+	<div class="-mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-1">
+		{#each [['', 'Todas as pessoas'], ...pessoasUsadas.map((p) => [p, p === 'casa' ? 'Casa' : (membro(p)?.nome ?? '?')])] as [v, r] (v)}
+			<button class="chip shrink-0 px-3 py-1.5 text-xs {pessoa === v ? 'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900' : 'bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300'}" onclick={() => (pessoa = v)}>👤 {r}</button>
+		{/each}
+	</div>
+{/if}
 
 {#if !categorias.length}
 	<p class="card mt-4 text-center text-sm text-zinc-500">Sem gastos realizados neste período. Importe extratos e faturas ou marque lançamentos como pagos.</p>

@@ -6,6 +6,15 @@ export interface ItemTexto {
 }
 
 /**
+ * Linhas na ordem de leitura de um layout em duas colunas: primeiro a metade esquerda da página,
+ * depois a direita. Usado na fatura da Caixa, em que cada coluna continua a seção do cartão anterior.
+ */
+export function agruparColunas(items: ItemTexto[], largura: number): string[] {
+	const meio = largura / 2;
+	return [...agruparLinhas(items.filter((i) => i.transform[4] < meio)), ...agruparLinhas(items.filter((i) => i.transform[4] >= meio))];
+}
+
+/**
  * Agrupa os itens de texto de uma página em linhas (pela coordenada Y), da esquerda para a direita.
  * Colunas separadas por espaço largo viram " | " para facilitar as regex dos parsers.
  */

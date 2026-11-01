@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, cat, contaNoTotal, MEIOS, membro } from '#lib/app.svelte.ts';
+	import { app, cat, contaNoTotal, MEIOS, membro, rotuloCartao } from '#lib/app.svelte.ts';
 	import CamposBase from '#lib/components/CamposBase.svelte';
 	import Icone from '#lib/components/Icone.svelte';
 	import Reclassificar from '#lib/components/Reclassificar.svelte';
@@ -147,10 +147,15 @@
 		vinculadas = ts;
 	}
 
+	/** fatura com vários cartões: agrupar por categoria ou por cartão (titular/adicionais) */
+	let agruparPor = $state<'categoria' | 'cartao'>('categoria');
+	const variosCartoes = $derived(new Set(vinculadas.map((t) => t.cartao).filter(Boolean)).size > 1);
+
 	const gruposVinculadas = $derived.by(() => {
 		const m = new Map<string, { id: string; ts: Transacao[]; total: number }>();
+		const porCartao = agruparPor === 'cartao' && variosCartoes;
 		for (const t of vinculadas) {
-			const k = contaNoTotal(t.natureza) ? (t.categoria_id ?? '') : 'fora';
+			const k = !contaNoTotal(t.natureza) ? 'fora' : porCartao ? `cartao:${t.cartao ?? ''}` : (t.categoria_id ?? '');
 			const g = m.get(k) ?? m.set(k, { id: k, ts: [], total: 0 }).get(k)!;
 			g.ts.push(t);
 			g.total -= t.valor;
@@ -326,14 +331,22 @@
 	{#if vinculadas.length}
 		<div class="mb-4">
 			<p class="label">{vinculadas.length} {vinculadas.length === 1 ? 'transação vinculada' : 'transações vinculadas'} · toque para ver e reclassificar</p>
+			{#if variosCartoes}
+				<div class="mb-2"><Seg bind:value={agruparPor} options={[['categoria', 'Por categoria'], ['cartao', 'Por cartão']]} /></div>
+			{/if}
 			<ul class="divide-y divide-zinc-200 rounded-xl bg-zinc-100 dark:divide-zinc-700 dark:bg-zinc-800">
 				{#each gruposVinculadas as g (g.id)}
-					{@const c = cat(g.id || null)}
-					{@const media = mediaCartao && g.id !== 'fora' ? (mediaCartao[g.id] ?? 0) : null}
+					{@const ehCartao = g.id.startsWith('cartao:')}
+					{@const c = ehCartao ? undefined : cat(g.id || null)}
+					{@const media = mediaCartao && g.id !== 'fora' && !ehCartao ? (mediaCartao[g.id] ?? 0) : null}
 					<li>
 						<button type="button" class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm" onclick={() => (grupoAberto = grupoAberto === g.id ? null : g.id)}>
 							<span class="min-w-0 flex-1 truncate font-medium">
-								{g.id === 'fora' ? '⊘ Não contam' : `${c?.icone ?? '•'} ${c?.nome ?? 'Sem categoria'}`}
+								{g.id === 'fora'
+									? '⊘ Não contam'
+									: ehCartao
+										? `💳 ${rotuloCartao(g.ts[0].conta_id, g.ts[0].cartao)}`
+										: `${c?.icone ?? '•'} ${c?.nome ?? 'Sem categoria'}`}
 								<span class="text-xs font-normal text-zinc-500">({g.ts.length})</span>
 							</span>
 							{#if media !== null}

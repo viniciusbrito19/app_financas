@@ -4,7 +4,7 @@
 	import Seg from '#lib/components/Seg.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
 	import { ok, sb } from '#lib/supabase.ts';
-	import type { Categoria, Conta, Membro, Regra, Tipo } from '#lib/types.ts';
+	import type { Cartao, Categoria, Conta, Membro, Regra, Tipo } from '#lib/types.ts';
 	import { NATUREZAS } from '#lib/app.svelte.ts';
 
 	async function renomearCasa() {
@@ -84,6 +84,11 @@
 		);
 		abertaConta = false;
 		carregarCadastros();
+	}
+
+	async function salvarCartao(k: Cartao, membro_id: string | null) {
+		ok(await sb.from('cartoes').update({ membro_id }).eq('id', k.id));
+		k.membro_id = membro_id;
 	}
 
 	async function excluirConta() {
@@ -183,6 +188,22 @@
 		<li class="px-3 py-3 text-sm text-zinc-500">Cadastre BB, Caixa e o cartão para importar extratos e faturas.</li>
 	{/each}
 </ul>
+
+{#if app.cartoes.length}
+	<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">Cartões da fatura (titular e adicionais)</h2>
+	<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+		{#each app.cartoes as k (k.id)}
+			<li class="flex items-center gap-3 px-3 py-2">
+				<span class="w-24 shrink-0 font-mono text-sm">•• {k.final}</span>
+				<select class="input h-10 text-sm" value={k.membro_id} onchange={(e) => salvarCartao(k, (e.currentTarget as HTMLSelectElement).value || null)}>
+					<option value="">Sem dono definido</option>
+					{#each app.membros as m (m.id)}<option value={m.id}>{m.nome}</option>{/each}
+				</select>
+			</li>
+		{/each}
+	</ul>
+	<p class="mt-1 px-1 text-xs text-zinc-500">Os finais aparecem ao importar a fatura. Associe cada um a uma pessoa para ver os gastos por pessoa na Análise.</p>
+{/if}
 
 {#if app.regras.length}
 	<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">Regras de classificação ({app.regras.length})</h2>

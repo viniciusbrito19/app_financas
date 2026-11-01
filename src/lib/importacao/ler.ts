@@ -17,8 +17,8 @@ export async function lerArquivo(file: File, conta: Conta, senha?: string): Prom
 		return { formato: 'ofx', brutas: parseOFX(decodificarOFX(buf)) };
 	}
 	if (!/\.pdf$/i.test(file.name)) throw new Error('Para o cartão, use o PDF da fatura.');
-	const { linhasPDF } = await import('./pdf.ts');
-	const fatura = parseFaturaCaixa(await linhasPDF(buf, senha));
+	const { textoPDF } = await import('./pdf.ts');
+	const fatura = parseFaturaCaixa(await textoPDF(buf, senha));
 	return { formato: 'pdf_fatura', brutas: fatura.itens, fatura };
 }
 

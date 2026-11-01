@@ -1,7 +1,7 @@
 import type { User } from '@supabase/supabase-js';
 import { mesAtual } from './format.ts';
 import { ok, sb } from './supabase.ts';
-import type { Categoria, Conta, Membro, Natureza, Recorrencia, Regra, Residencia } from './types.ts';
+import type { Cartao, Categoria, Conta, Membro, Natureza, Recorrencia, Regra, Residencia } from './types.ts';
 
 /** Estado global da sessão: usuário, residência ativa e cadastros auxiliares. */
 export const app = $state({
@@ -10,6 +10,8 @@ export const app = $state({
 	membros: [] as Membro[],
 	cats: [] as Categoria[],
 	contas: [] as Conta[],
+	/** finais de cartão (titular/adicionais) e a pessoa de cada um */
+	cartoes: [] as Cartao[],
 	recs: [] as Recorrencia[],
 	regras: [] as Regra[],
 	/** transações de gasto ainda sem categoria (badge da aba Importar) */
@@ -28,12 +30,13 @@ export async function carregarResidencia(user: User) {
 
 export async function carregarCadastros() {
 	const id = app.res!.id;
-	const [membros, cats, contas, recs, regras] = await Promise.all([
+	const [membros, cats, contas, recs, regras, cartoes] = await Promise.all([
 		sb.from('membros').select('*').eq('residencia_id', id).order('created_at'),
 		sb.from('categorias').select('*').eq('residencia_id', id).order('nome'),
 		sb.from('contas').select('*').eq('residencia_id', id).order('created_at'),
 		sb.from('recorrencias').select('*').eq('residencia_id', id).order('descricao'),
 		sb.from('regras').select('*').eq('residencia_id', id).order('padrao'),
+		sb.from('cartoes').select('*').eq('residencia_id', id).order('final'),
 		contarPendentes()
 	]);
 	app.membros = ok(membros) as Membro[];
@@ -41,6 +44,7 @@ export async function carregarCadastros() {
 	app.contas = ok(contas) as Conta[];
 	app.recs = ok(recs) as Recorrencia[];
 	app.regras = ok(regras) as Regra[];
+	app.cartoes = ok(cartoes) as Cartao[];
 }
 
 export async function contarPendentes() {
@@ -55,7 +59,7 @@ export async function contarPendentes() {
 }
 
 export function limpar() {
-	Object.assign(app, { user: null, res: null, membros: [], cats: [], contas: [], recs: [], regras: [], pendentes: 0 });
+	Object.assign(app, { user: null, res: null, membros: [], cats: [], contas: [], cartoes: [], recs: [], regras: [], pendentes: 0 });
 }
 
 export const cat = (id: string | null) => app.cats.find((c) => c.id === id);
@@ -66,3 +70,11 @@ export const MEIOS = { pix: 'Pix', debito: 'Débito', cartao: 'Cartão', boleto:
 export const NATUREZAS = { gasto: 'Gasto', receita: 'Receita', transferencia: 'Transferência', pagamento_fatura: 'Pag. fatura', ignorada: 'Não contar' } as const;
 /** naturezas que entram em totais e análise */
 export const contaNoTotal = (n: Natureza) => n === 'gasto' || n === 'receita';
+
+/** "•• 8190 · Yanne" — final do cartão e a pessoa associada, quando houver. */
+export function rotuloCartao(contaId: string, final: string | null) {
+	if (!final) return 'Ajustes da fatura';
+	const k = app.cartoes.find((c) => c.conta_id === contaId && c.final === final);
+	const quem = k?.apelido || membro(k?.membro_id ?? null)?.nome;
+	return `•• ${final}${quem ? ` · ${quem}` : ''}`;
+}

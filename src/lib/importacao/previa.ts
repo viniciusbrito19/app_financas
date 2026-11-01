@@ -17,10 +17,10 @@ export function montarItens(brutas: Bruta[], conta: Conta, regras: Regra[], comp
 	const vistos = new Map<string, number>();
 	return brutas.map((b) => {
 		const norm = normalizar(b.descricao);
-		const chave = `${b.data}|${b.valor.toFixed(2)}|${norm}|${b.parcela ?? ''}`;
+		const chave = `${b.data}|${b.valor.toFixed(2)}|${norm}|${b.parcela ?? ''}|${b.cartao ?? ''}`;
 		const n = vistos.get(chave) ?? 0;
 		vistos.set(chave, n + 1);
-		const cartao = conta.tipo === 'cartao';
+		const ehCartao = conta.tipo === 'cartao';
 		const it: Item = {
 			conta_id: conta.id,
 			data: b.data,
@@ -28,14 +28,15 @@ export function montarItens(brutas: Bruta[], conta: Conta, regras: Regra[], comp
 			descricao: b.descricao,
 			descricao_norm: norm,
 			valor: b.valor,
-			meio: cartao ? 'cartao' : meioDe(norm),
-			natureza: cartao ? 'gasto' : naturezaDe(norm, b.valor),
+			meio: ehCartao ? 'cartao' : meioDe(norm),
+			natureza: ehCartao ? 'gasto' : naturezaDe(norm, b.valor),
 			categoria_id: null,
 			lancamento_id: null,
 			parcela: b.parcela ?? null,
 			parcelas: b.parcelas ?? null,
 			projetada: false,
 			nota: null,
+			cartao: b.cartao ?? null,
 			hash: b.id ?? `${chave}|${n}`
 		};
 		return aplicarRegra(it, regras);

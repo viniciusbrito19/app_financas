@@ -109,5 +109,17 @@ export interface Transacao {
 	parcelas: number | null;
 	projetada: boolean;
 	nota: string | null;
+	/** final do cartão (fatura com titular e adicionais) */
+	cartao: string | null;
 	hash: string;
+}
+
+/** Final de cartão (titular ou adicional) de uma conta-cartão, associado a uma pessoa. */
+export interface Cartao {
+	id: string;
+	residencia_id: string;
+	conta_id: string;
+	final: string;
+	membro_id: string | null;
+	apelido: string | null;
 }

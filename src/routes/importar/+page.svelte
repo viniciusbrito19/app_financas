@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, cat, conta as contaDe, contaNoTotal, contarPendentes, MEIOS, NATUREZAS } from '#lib/app.svelte.ts';
+	import { app, carregarCadastros, cat, conta as contaDe, contaNoTotal, contarPendentes, MEIOS, NATUREZAS, rotuloCartao } from '#lib/app.svelte.ts';
 	import Classificar from '#lib/components/Classificar.svelte';
 	import Icone from '#lib/components/Icone.svelte';
 	import Reclassificar from '#lib/components/Reclassificar.svelte';
@@ -97,6 +97,12 @@
 			const linhas = [...novos, ...projetarParcelas(novos)].map((i) => ({ ...paraLinha(i), residencia_id: app.res!.id, importacao_id: imp.id }));
 			ok(await sb.from('transacoes').upsert(linhas, { onConflict: 'conta_id,hash', ignoreDuplicates: true }));
 			ok(await sb.rpc('conciliar_importacao', { p_imp: imp.id }));
+			// registra finais de cartão novos (titular/adicionais) para associar a pessoas em Ajustes
+			const finais = [...new Set(novos.map((i) => i.cartao).filter((f): f is string => !!f))];
+			if (finais.length) {
+				ok(await sb.from('cartoes').upsert(finais.map((final) => ({ residencia_id: app.res!.id, conta_id: contaId, final })), { onConflict: 'conta_id,final', ignoreDuplicates: true }));
+				await carregarCadastros();
+			}
 			aviso = `${novos.length} transações importadas.`;
 			cancelar();
 			await Promise.all([carregarHistorico(), carregarFila(), contarPendentes()]);
@@ -207,6 +213,7 @@
 					<span>{dataCurta(t.data)}</span>
 					<span class="chip bg-zinc-500/15">{MEIOS[t.meio]}</span>
 					{#if t.parcela}<span class="chip bg-zinc-500/15">{t.parcela}/{t.parcelas}</span>{/if}
+					{#if t.cartao}<span class="chip bg-zinc-500/15">•• {t.cartao}</span>{/if}
 					{#if 'duplicada' in t && t.duplicada}
 						<span>já importada</span>
 					{:else if t.natureza !== 'gasto' && t.natureza !== 'receita'}
@@ -310,6 +317,17 @@
 			<p>Fatura de <b>{mesLabel(competenciaFatura!)}</b> · vence {dataCurta(leitura.fatura.vencimento)} · total <b>{brl(leitura.fatura.total)}</b></p>
 			{#if Math.abs(soma - leitura.fatura.total) > 0.01}
 				<p class="text-amber-600">Atenção: soma dos itens ({brl(soma)}) difere do total da fatura.</p>
+			{/if}
+			{#if Object.keys(leitura.fatura.cartoes ?? {}).length > 1}
+				<ul class="mt-2 space-y-0.5 text-xs">
+					{#each Object.entries(leitura.fatura.cartoes!) as [final, total] (final)}
+						{@const lido = -itens.filter((i) => i.cartao === final).reduce((s, i) => s + i.valor, 0)}
+						<li class="flex justify-between">
+							<span>{rotuloCartao(contaId, final)}</span>
+							<span class="tabular-nums">{brl(lido)}{Math.abs(lido - total) > 0.01 ? ` ⚠ PDF: ${brl(total)}` : ''}</span>
+						</li>
+					{/each}
+				</ul>
 			{/if}
 		{:else}
 			<p>Saídas <b>{brl(saidas)}</b> · Entradas <b class="text-receita">{brl(entradas)}</b></p>
