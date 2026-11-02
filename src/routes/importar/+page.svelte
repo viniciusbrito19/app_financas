@@ -74,7 +74,7 @@
 		lancs = comps.length
 			? (ok(await sb.from('lancamentos').select('*').eq('residencia_id', app.res!.id).in('competencia', comps).order('vencimento')) as Lancamento[]).filter(
 					// embutidas na fatura do cartão não são pagas pelo extrato
-					(l) => !embutida(l.recorrencia_id)
+					(l) => !embutida(l.recorrencia_id) && l.status !== 'cancelado'
 				)
 			: [];
 		sugerir();

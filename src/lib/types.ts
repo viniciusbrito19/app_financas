@@ -56,7 +56,7 @@ export interface Lancamento {
 	membro_id: string | null;
 	valor_previsto: number;
 	valor_real: number | null;
-	status: 'previsto' | 'pago';
+	status: 'previsto' | 'pago' | 'cancelado';
 	pago_em: string | null;
 }
 

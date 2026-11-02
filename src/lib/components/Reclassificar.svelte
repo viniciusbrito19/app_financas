@@ -35,7 +35,7 @@
 			) as Lancamento[];
 			if (t !== alvo) return;
 			// todos, inclusive os já pagos: um gasto extra no mês soma no valor real do lançamento
-			lancs = ls.filter((l) => !embutida(l.recorrencia_id));
+			lancs = ls.filter((l) => !embutida(l.recorrencia_id) && l.status !== 'cancelado');
 			carregado = alvo.id;
 		})();
 	});

@@ -22,7 +22,11 @@
 	async function carregar(mes = app.mes) {
 		ok(await sb.rpc('gerar_mes', { p_res: app.res!.id, p_comp: mes }));
 		const [ls, ts] = await Promise.all([
-			sb.from('lancamentos').select('*, transacoes(count), recorrencias(acumula, cartao_conta_id)').eq('residencia_id', app.res!.id).eq('competencia', mes).order('vencimento'),
+			sb.from('lancamentos').select('*, transacoes(count), recorrencias(acumula, cartao_conta_id)')
+				.eq('residencia_id', app.res!.id)
+				.eq('competencia', mes)
+				.neq('status', 'cancelado')
+				.order('vencimento'),
 			sb
 				.from('transacoes')
 				.select('*')
@@ -93,8 +97,15 @@
 		carregar(app.mes);
 	});
 
-	/** Recorrência paga em várias vezes (ex.: faxina em saques) ainda sem atingir o previsto. */
-	const parcial = (l: Lancamento & Opcoes) => l.status !== 'pago' && l.valor_real != null && !!l.recorrencias?.acumula;
+	/** Lançamento da fatura do cartão (recorrência ligada a uma ou mais contas-cartão). */
+	const ehFatura = (l: Lancamento) => app.contas.some((c) => c.tipo === 'cartao' && c.recorrencia_id === l.recorrencia_id);
+
+	/**
+	 * Recorrência paga em várias vezes (ex.: faxina em saques) ainda sem atingir o previsto.
+	 * Não se aplica à fatura: o valor real dela é o total dos PDFs, não o que já foi pago.
+	 */
+	const parcial = (l: Lancamento & Opcoes) =>
+		l.status !== 'pago' && l.valor_real != null && !!l.recorrencias?.acumula && !ehFatura(l);
 
 	/** Melhor valor conhecido: o real, se informado; senão o previsto. Parcial: o maior dos dois. */
 	const valor = (l: Lancamento) =>
@@ -115,6 +126,25 @@
 		})
 	);
 	const [rec, desp] = $derived(grupos);
+
+	// --- abas das despesas: cada uma mostra (e soma) só o que exibe ------------
+	let filtroDespesa = $state<'geral' | 'cartao' | 'naoPrevistas'>('geral');
+	/** recorrentes fora do cartão */
+	const despGeral = $derived(desp.ls.filter((l) => l.recorrencia_id));
+	/** lançados à mão, sem recorrência */
+	const despAvulsas = $derived(desp.ls.filter((l) => !l.recorrencia_id));
+	const totalOutros = $derived(outrosGrupos.reduce((s, g) => s + g.total, 0));
+	const abasDespesa = $derived([
+		{ v: 'geral', rotulo: 'Geral', n: despGeral.length, total: soma(despGeral) },
+		{ v: 'cartao', rotulo: 'Cartão', n: embutidas.length, total: embutidas.reduce((s, e) => s + Number(e.l.valor_previsto), 0) },
+		{
+			v: 'naoPrevistas',
+			rotulo: 'Não previstas',
+			n: despAvulsas.length + outrosGrupos.reduce((s, g) => s + g.ts.length, 0),
+			total: soma(despAvulsas) + totalOutros
+		}
+	] as const);
+	const abaAtual = $derived(abasDespesa.find((a) => a.v === filtroDespesa)!);
 
 	function situacao(l: Lancamento) {
 		if (l.status === 'pago')
@@ -235,9 +265,26 @@
 		carregar();
 	}
 
+	/**
+	 * Avulso: apaga. Recorrente: cancela só este mês (gerar_mes não o recria; a recorrente segue
+	 * nos próximos meses) e desliga as transações, que passam a "Não previstas".
+	 */
 	async function excluir() {
-		if (!atual || !confirm('Excluir este lançamento?')) return;
-		ok(await sb.from('lancamentos').delete().eq('id', atual.id));
+		if (!atual) return;
+		const recorrente = !!atual.recorrencia_id;
+		const aviso = !recorrente
+			? 'Excluir este lançamento?'
+			: `Excluir "${atual.descricao}" só deste mês? A recorrente continua nos próximos meses.` +
+				(ehFatura(atual)
+					? ' Os itens e pagamentos ligados a esta fatura passam a contar como não previstos.'
+					: ' Transações do extrato ligadas a ele passam para "Não previstas".');
+		if (!confirm(aviso)) return;
+		if (recorrente) {
+			ok(await sb.from('transacoes').update({ lancamento_id: null }).eq('lancamento_id', atual.id));
+			ok(await sb.from('lancamentos').update({ status: 'cancelado', valor_real: null, pago_em: null }).eq('id', atual.id));
+		} else {
+			ok(await sb.from('lancamentos').delete().eq('id', atual.id));
+		}
 		aberto = false;
 		carregar();
 	}
@@ -270,49 +317,38 @@
 		<p class="text-sm">Cadastre receitas e despesas em <b>Recorrentes</b> ou toque em + para um avulso.</p>
 	</div>
 {:else}
-	{#each grupos as g (g.tipo)}
-		{#if g.ls.length}
-			<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
-				<span>{g.tipo === 'receita' ? 'Receitas' : 'Despesas'}</span><span>{brl(g.total)}</span>
-			</h2>
-			<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
-				{#each g.ls as l (l.id)}
-					{@const s = situacao(l)}
-					{@const d = desvio(l)}
-					<li class="flex items-center gap-3 px-3 py-3">
-						<button class="relative" onclick={() => alternarPago(l)} aria-label={l.status === 'pago' ? 'Desmarcar pago' : 'Marcar como pago'}>
-							<Icone c={cat(l.categoria_id)} />
-							{#if l.status === 'pago'}<span class="absolute -right-1 -bottom-1 grid size-5 place-items-center rounded-full bg-emerald-500 text-[11px] text-white ring-2 ring-white dark:ring-zinc-900">✓</span>{/if}
-						</button>
-						<button class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => abrir(l)}>
-							<div class="min-w-0 flex-1">
-								<p class="truncate font-medium {l.status === 'pago' ? 'text-zinc-400' : ''}">{l.descricao}</p>
-								<p class="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
-									<span class="chip {s.cls}">{s.txt}</span>
-									{#if l.membro_id}<span>{membro(l.membro_id)?.nome}</span>{/if}
-									{#if d}<span class={d.cls}>{d.txt}</span>{/if}
-									{#if conciliado(l)}<span title="Conciliado com extrato/fatura">🔗</span>{/if}
-								</p>
-								{#if parcial(l)}
-									<div class="mt-1.5 h-1 rounded-full bg-zinc-200 dark:bg-zinc-700">
-										<div class="h-full rounded-full bg-amber-500" style:width="{Math.min(100, (Number(l.valor_real) / Number(l.valor_previsto)) * 100)}%"></div>
-									</div>
-								{/if}
-							</div>
-							<div class="text-right">
-								<p class="font-semibold tabular-nums {l.tipo === 'receita' ? 'text-receita' : ''}">{brl(valor(l))}</p>
-								{#if l.recorrencia_id && l.valor_real == null}<p class="text-[11px] text-zinc-400">estimado</p>{/if}
-							</div>
-						</button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	{/each}
+	{#if rec.ls.length}
+		<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
+			<span>Receitas</span><span>{brl(rec.total)}</span>
+		</h2>
+		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+			{#each rec.ls as l (l.id)}{@render linhaLancamento(l)}{/each}
+		</ul>
+	{/if}
 
-	{#if embutidas.length}
-		<h2 class="mt-6 mb-1 px-1 text-sm font-semibold text-zinc-500">Embutidas na fatura do cartão</h2>
-		<p class="mb-2 px-1 text-xs text-zinc-500">Acompanhamento: não somam nos totais, pois já estão na fatura.</p>
+	<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
+		<span>Despesas</span><span>{brl(abaAtual.total)}</span>
+	</h2>
+	<div class="-mx-4 mb-2 flex gap-2 overflow-x-auto px-4 pb-1">
+		{#each abasDespesa as a (a.v)}
+			<button
+				class="chip shrink-0 px-3 py-1.5 text-xs {filtroDespesa === a.v ? 'bg-brand text-white' : 'bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300'}"
+				onclick={() => (filtroDespesa = a.v)}>{a.rotulo} ({a.n})</button
+			>
+		{/each}
+	</div>
+
+	{#if filtroDespesa === 'geral'}
+		{#if despGeral.length}
+			<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+				{#each despGeral as l (l.id)}{@render linhaLancamento(l)}{/each}
+			</ul>
+		{:else}
+			<p class="card text-sm text-zinc-500">Nenhuma despesa recorrente neste mês.</p>
+		{/if}
+	{:else if filtroDespesa === 'cartao'}
+		<p class="mb-2 px-1 text-xs text-zinc-500">Acompanhamento: não somam nos totais do mês, pois já estão na fatura.</p>
+		{#if embutidas.length}
 		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
 			{#each embutidas as e (e.l.id)}
 				{@const prev = Number(e.l.valor_previsto)}
@@ -341,32 +377,42 @@
 				</li>
 			{/each}
 		</ul>
-	{/if}
-
-	{#if outrosGrupos.length}
-		<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
-			<span>Outros gastos (não previstos)</span><span>{brl(outrosGrupos.reduce((s, g) => s + g.total, 0))}</span>
-		</h2>
-		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
-			{#each outrosGrupos as g (g.id)}
-				{@const c = cat(g.id)}
-				<li>
-					<button class="flex w-full items-center gap-3 px-3 py-3 text-left" onclick={() => (expandido = expandido === g.id ? null : g.id)}>
-						<Icone {c} />
-						<div class="min-w-0 flex-1">
-							<p class="truncate font-medium">{c?.nome ?? 'Sem categoria'}</p>
-							<p class="text-xs text-zinc-500">{g.ts.length} {g.ts.length === 1 ? 'transação' : 'transações'}</p>
-						</div>
-						<p class="font-semibold tabular-nums">{brl(g.total)}</p>
-					</button>
-					{#if expandido === g.id}
-						<ul class="bg-zinc-50 px-3 pb-2 dark:bg-zinc-950/40">
-							{#each g.ts as t (t.id)}{@render itemTransacao(t)}{/each}
-						</ul>
-					{/if}
-				</li>
-			{/each}
-		</ul>
+		{:else}
+			<p class="card text-sm text-zinc-500">Nenhuma despesa marcada como paga no cartão. Marque em Recorrentes → "Paga no cartão".</p>
+		{/if}
+	{:else}
+		{#if despAvulsas.length}
+			<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+				{#each despAvulsas as l (l.id)}{@render linhaLancamento(l)}{/each}
+			</ul>
+		{/if}
+		{#if outrosGrupos.length}
+			<div class={despAvulsas.length ? 'mt-3' : ''}>
+			<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+				{#each outrosGrupos as g (g.id)}
+					{@const c = cat(g.id)}
+					<li>
+						<button class="flex w-full items-center gap-3 px-3 py-3 text-left" onclick={() => (expandido = expandido === g.id ? null : g.id)}>
+							<Icone {c} />
+							<div class="min-w-0 flex-1">
+								<p class="truncate font-medium">{c?.nome ?? 'Sem categoria'}</p>
+								<p class="text-xs text-zinc-500">{g.ts.length} {g.ts.length === 1 ? 'transação' : 'transações'}</p>
+							</div>
+							<p class="font-semibold tabular-nums">{brl(g.total)}</p>
+						</button>
+						{#if expandido === g.id}
+							<ul class="bg-zinc-50 px-3 pb-2 dark:bg-zinc-950/40">
+								{#each g.ts as t (t.id)}{@render itemTransacao(t)}{/each}
+							</ul>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+			</div>
+		{/if}
+		{#if !despAvulsas.length && !outrosGrupos.length}
+			<p class="card text-sm text-zinc-500">Nenhuma despesa não prevista neste mês.</p>
+		{/if}
 	{/if}
 
 	{#if outrasReceitas.length}
@@ -378,6 +424,37 @@
 {/if}
 
 <button class="fab" onclick={() => abrir(null)} aria-label="Novo lançamento avulso">+</button>
+
+{#snippet linhaLancamento(l: L)}
+	{@const s = situacao(l)}
+	{@const d = desvio(l)}
+		<li class="flex items-center gap-3 px-3 py-3">
+			<button class="relative" onclick={() => alternarPago(l)} aria-label={l.status === 'pago' ? 'Desmarcar pago' : 'Marcar como pago'}>
+				<Icone c={cat(l.categoria_id)} />
+				{#if l.status === 'pago'}<span class="absolute -right-1 -bottom-1 grid size-5 place-items-center rounded-full bg-emerald-500 text-[11px] text-white ring-2 ring-white dark:ring-zinc-900">✓</span>{/if}
+			</button>
+			<button class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => abrir(l)}>
+				<div class="min-w-0 flex-1">
+					<p class="truncate font-medium {l.status === 'pago' ? 'text-zinc-400' : ''}">{l.descricao}</p>
+					<p class="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+						<span class="chip {s.cls}">{s.txt}</span>
+						{#if l.membro_id}<span>{membro(l.membro_id)?.nome}</span>{/if}
+						{#if d}<span class={d.cls}>{d.txt}</span>{/if}
+						{#if conciliado(l)}<span title="Conciliado com extrato/fatura">🔗</span>{/if}
+					</p>
+					{#if parcial(l)}
+						<div class="mt-1.5 h-1 rounded-full bg-zinc-200 dark:bg-zinc-700">
+							<div class="h-full rounded-full bg-amber-500" style:width="{Math.min(100, (Number(l.valor_real) / Number(l.valor_previsto)) * 100)}%"></div>
+						</div>
+					{/if}
+				</div>
+				<div class="text-right">
+					<p class="font-semibold tabular-nums {l.tipo === 'receita' ? 'text-receita' : ''}">{brl(valor(l))}</p>
+					{#if l.recorrencia_id && l.valor_real == null}<p class="text-[11px] text-zinc-400">estimado</p>{/if}
+				</div>
+			</button>
+		</li>
+{/snippet}
 
 {#snippet itemTransacao(t: Transacao)}
 	<li>
@@ -451,8 +528,8 @@
 			</div>
 		{/if}
 		<button class="btn btn-primary w-full">Salvar</button>
-		{#if atual && !atual.recorrencia_id}
-			<button type="button" class="btn w-full text-despesa" onclick={excluir}>Excluir</button>
+		{#if atual}
+			<button type="button" class="btn w-full text-despesa" onclick={excluir}>{atual.recorrencia_id ? 'Excluir só deste mês' : 'Excluir'}</button>
 		{/if}
 	</form>
 </Sheet>
