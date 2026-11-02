@@ -83,6 +83,8 @@
 				: await sb.from('recorrencias').insert({ ...row, residencia_id: app.res!.id })
 		);
 		aberto = false;
+		// mostra a aba onde a recorrência salva aparece
+		if (row.tipo === 'despesa') filtroDespesa = row.cartao_conta_id ? 'cartao' : 'geral';
 		// atualiza também a lista global (usada no Mês para embutidas e "várias vezes")
 		await Promise.all([carregar(), carregarCadastros()]);
 	}
