@@ -2,6 +2,7 @@
 	import { app, carregarCadastros, cat, conta as contaDe, contaNoTotal, contarPendentes, MEIOS, NATUREZAS, rotuloCartao } from '#lib/app.svelte.ts';
 	import Classificar from '#lib/components/Classificar.svelte';
 	import Icone from '#lib/components/Icone.svelte';
+	import MonthPicker from '#lib/components/MonthPicker.svelte';
 	import Reclassificar from '#lib/components/Reclassificar.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
 	import { naturezaDe } from '#lib/importacao/normalizar.ts';
@@ -105,7 +106,7 @@
 			}
 			aviso = `${novos.length} transações importadas.`;
 			cancelar();
-			await Promise.all([carregarHistorico(), carregarFila(), contarPendentes()]);
+			await Promise.all([carregarHistorico(), carregarFila(), carregarFora(), contarPendentes()]);
 		} catch (e) {
 			erro = (e as Error).message;
 		} finally {
@@ -157,14 +158,53 @@
 		ok(await sb.from('transacoes').update({ natureza: 'ignorada' }).eq('id', t.id));
 		fila = fila.filter((x) => x.id !== t.id);
 		descartadas = [...descartadas, t];
-		await contarPendentes();
+		await Promise.all([contarPendentes(), carregarFora()]);
 	}
 
 	async function desfazerDescarte() {
 		const ids = descartadas.map((t) => t.id);
 		ok(await sb.from('transacoes').update({ natureza: 'gasto' }).in('id', ids));
 		descartadas = [];
-		await Promise.all([carregarFila(), contarPendentes()]);
+		await Promise.all([carregarFila(), carregarFora(), contarPendentes()]);
+	}
+
+	// --- o que não conta nos totais (por mês) ---------------------------------
+	let foraDosTotais = $state<Transacao[]>([]);
+	let grupoForaAberto = $state<string | null>(null);
+
+	async function carregarFora(mes = app.mes) {
+		const ts = ok(
+			await sb
+				.from('transacoes')
+				.select('*')
+				.eq('residencia_id', app.res!.id)
+				.eq('competencia', mes)
+				.eq('projetada', false)
+				.in('natureza', ['ignorada', 'transferencia', 'pagamento_fatura'])
+				.order('data')
+		) as Transacao[];
+		if (mes === app.mes) foraDosTotais = ts;
+	}
+	$effect(() => {
+		carregarFora(app.mes);
+	});
+
+	const gruposFora = $derived(
+		(
+			[
+				['ignorada', '⊘ Descartadas'],
+				['transferencia', '⇄ Transferências e investimentos'],
+				['pagamento_fatura', '💳 Pagamentos de fatura']
+			] as const
+		)
+			.map(([natureza, rotulo]) => ({ natureza, rotulo, ts: foraDosTotais.filter((t) => t.natureza === natureza) }))
+			.filter((g) => g.ts.length)
+	);
+
+	/** Volta a contar: gasto ou receita pelo sinal do valor. */
+	async function voltarAContar(t: Transacao) {
+		ok(await sb.from('transacoes').update({ natureza: t.valor < 0 ? 'gasto' : 'receita' }).eq('id', t.id));
+		await Promise.all([carregarFora(), carregarFila(), contarPendentes()]);
 	}
 
 	async function carregarFila() {
@@ -190,7 +230,7 @@
 	async function desfazer(i: Importacao) {
 		if (!confirm(`Desfazer a importação de "${i.arquivo}"? As transações serão removidas e os lançamentos reabertos.`)) return;
 		ok(await sb.rpc('desfazer_importacao', { p_imp: i.id }));
-		await Promise.all([carregarHistorico(), carregarFila(), contarPendentes()]);
+		await Promise.all([carregarHistorico(), carregarFila(), carregarFora(), contarPendentes()]);
 	}
 
 	carregarFila();
@@ -235,7 +275,14 @@
 				aria-label={t.natureza === 'ignorada' ? 'Voltar a contar' : 'Não contar'}
 				title={t.natureza === 'ignorada' ? 'Voltar a contar' : 'Não contar'}>{t.natureza === 'ignorada' ? '↺' : '⊘'}</button
 			>
-		{:else if 'id' in t}
+		{:else if 'id' in t && t.natureza === 'ignorada'}
+			<button
+				class="grid size-11 shrink-0 place-items-center text-lg text-zinc-400"
+				onclick={() => voltarAContar(t)}
+				aria-label="Voltar a contar"
+				title="Voltar a contar">↺</button
+			>
+		{:else if 'id' in t && contaNoTotal(t.natureza)}
 			<button
 				class="grid size-11 shrink-0 place-items-center text-lg text-zinc-300 dark:text-zinc-600"
 				onclick={() => descartar(t)}
@@ -285,6 +332,31 @@
 			{#each fila as t (t.id)}{@render linha(t, () => (filaAlvo = t))}{/each}
 		</ul>
 	{/if}
+
+	<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">Não contam nos totais</h2>
+	<div class="card space-y-3 p-3">
+		<MonthPicker bind:value={app.mes} />
+		{#if gruposFora.length}
+			<p class="text-xs text-zinc-500">Toque para reclassificar; ↺ volta a contar uma descartada.</p>
+			<ul class="divide-y divide-zinc-100 rounded-xl bg-zinc-50 dark:divide-zinc-800 dark:bg-zinc-950/40">
+				{#each gruposFora as g (g.natureza)}
+					<li>
+						<button class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm" onclick={() => (grupoForaAberto = grupoForaAberto === g.natureza ? null : g.natureza)}>
+							<span class="flex-1 font-medium">{g.rotulo} <span class="text-xs font-normal text-zinc-500">({g.ts.length})</span></span>
+							<span class="text-zinc-400">{grupoForaAberto === g.natureza ? '▴' : '▾'}</span>
+						</button>
+						{#if grupoForaAberto === g.natureza}
+							<ul class="divide-y divide-zinc-100 dark:divide-zinc-800">
+								{#each g.ts as t (t.id)}{@render linha(t, () => (filaAlvo = t))}{/each}
+							</ul>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p class="text-center text-sm text-zinc-500">Nada fora dos totais neste mês.</p>
+		{/if}
+	</div>
 
 	{#if historico.length}
 		<h2 class="mt-6 mb-2 px-1 text-sm font-semibold text-zinc-500">Importações recentes</h2>
@@ -356,4 +428,10 @@
 	{/if}
 </Sheet>
 
-<Reclassificar bind:t={filaAlvo} onfeito={carregarFila} />
+<Reclassificar
+	bind:t={filaAlvo}
+	onfeito={() => {
+		carregarFila();
+		carregarFora();
+	}}
+/>
