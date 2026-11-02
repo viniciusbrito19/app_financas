@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, cat, contaNoTotal, MEIOS, membro, rotuloCartao } from '#lib/app.svelte.ts';
+	import { app, cat, contaNoTotal, embutida, MEIOS, membro, rotuloCartao } from '#lib/app.svelte.ts';
 	import CamposBase from '#lib/components/CamposBase.svelte';
 	import Icone from '#lib/components/Icone.svelte';
 	import Reclassificar from '#lib/components/Reclassificar.svelte';
@@ -31,12 +31,44 @@
 				.in('natureza', ['gasto', 'receita'])
 				.order('data')
 		]);
+		const lancs = ok(ls) as L[];
+		// compras do cartão do mês, para acompanhar as recorrentes embutidas na fatura
+		const contasEmb = [...new Set(lancs.map((l) => app.recs.find((r) => r.id === l.recorrencia_id)?.cartao_conta_id).filter((c): c is string => !!c))];
+		const compras = contasEmb.length
+			? (ok(
+					await sb
+						.from('transacoes')
+						.select('*')
+						.eq('residencia_id', app.res!.id)
+						.eq('competencia', mes)
+						.eq('natureza', 'gasto')
+						.eq('projetada', false)
+						.in('conta_id', contasEmb)
+						.order('data')
+				) as Transacao[])
+			: [];
 		if (mes === app.mes) {
-			itens = ok(ls) as L[];
+			itens = lancs;
 			outros = ok(ts) as Transacao[];
+			comprasCartao = compras;
 			carregando = false;
 		}
 	}
+
+	/** compras do cartão no mês (base do realizado das embutidas) */
+	let comprasCartao = $state<Transacao[]>([]);
+	let embutidaAberta = $state<string | null>(null);
+
+	/** Recorrentes pagas no cartão: previsto x compras da mesma categoria; fora dos totais (a fatura já soma). */
+	const embutidas = $derived(
+		itens
+			.filter((l) => embutida(l.recorrencia_id))
+			.map((l) => {
+				const contaId = app.recs.find((r) => r.id === l.recorrencia_id)?.cartao_conta_id;
+				const ts = comprasCartao.filter((t) => t.conta_id === contaId && t.categoria_id === l.categoria_id);
+				return { l, ts, real: -ts.reduce((s, t) => s + Number(t.valor), 0) };
+			})
+	);
 
 	const conciliado = (l: L) => (l.transacoes[0]?.count ?? 0) > 0;
 
@@ -74,7 +106,7 @@
 	const grupos = $derived(
 		(['receita', 'despesa'] as Tipo[]).map((tipo) => {
 			const ls = itens
-				.filter((l) => l.tipo === tipo)
+				.filter((l) => l.tipo === tipo && !embutida(l.recorrencia_id))
 				.sort((a, b) => +(a.status === 'pago') - +(b.status === 'pago') || a.vencimento.localeCompare(b.vencimento));
 			// importados não previstos já são realizados: entram no total e no pago
 			const extra = outros.filter((t) => (tipo === 'receita' ? t.valor > 0 : t.valor < 0)).reduce((s, t) => s + Math.abs(t.valor), 0);
@@ -276,6 +308,39 @@
 			</ul>
 		{/if}
 	{/each}
+
+	{#if embutidas.length}
+		<h2 class="mt-6 mb-1 px-1 text-sm font-semibold text-zinc-500">Embutidas na fatura do cartão</h2>
+		<p class="mb-2 px-1 text-xs text-zinc-500">Acompanhamento: não somam nos totais, pois já estão na fatura.</p>
+		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
+			{#each embutidas as e (e.l.id)}
+				{@const prev = Number(e.l.valor_previsto)}
+				{@const passou = e.real > prev}
+				<li>
+					<button class="flex w-full items-center gap-3 px-3 py-3 text-left" onclick={() => (embutidaAberta = embutidaAberta === e.l.id ? null : e.l.id)}>
+						<Icone c={cat(e.l.categoria_id)} />
+						<div class="min-w-0 flex-1">
+							<p class="truncate font-medium">{e.l.descricao}</p>
+							<p class="text-xs {passou ? 'text-rose-600' : 'text-zinc-500'}">
+								{brl(e.real)} de {brl(prev)} · {e.ts.length} {e.ts.length === 1 ? 'compra' : 'compras'}
+							</p>
+							<div class="mt-1.5 h-1 rounded-full bg-zinc-200 dark:bg-zinc-700">
+								<div class="h-full rounded-full {passou ? 'bg-rose-500' : 'bg-amber-500'}" style:width="{Math.min(100, prev ? (e.real / prev) * 100 : 0)}%"></div>
+							</div>
+						</div>
+						<p class="font-semibold text-zinc-400 tabular-nums">{brl(prev)}</p>
+					</button>
+					{#if embutidaAberta === e.l.id}
+						<ul class="bg-zinc-50 px-3 pb-2 dark:bg-zinc-950/40">
+							{#each e.ts as t (t.id)}{@render itemTransacao(t)}{:else}
+								<li class="py-2 text-xs text-zinc-500">Nenhuma compra no cartão com a categoria "{cat(e.l.categoria_id)?.nome ?? '—'}" neste mês.</li>
+							{/each}
+						</ul>
+					{/if}
+				</li>
+			{/each}
+		</ul>
+	{/if}
 
 	{#if outrosGrupos.length}
 		<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">

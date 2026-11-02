@@ -40,6 +40,8 @@ export interface Recorrencia {
 	ativo: boolean;
 	/** paga em várias vezes no mês: só quita quando a soma atinge o previsto */
 	acumula: boolean;
+	/** embutida na fatura desta conta-cartão: só acompanhamento, não soma nos totais */
+	cartao_conta_id: string | null;
 }
 
 export interface Lancamento {

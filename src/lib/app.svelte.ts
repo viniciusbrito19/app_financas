@@ -65,6 +65,8 @@ export function limpar() {
 export const cat = (id: string | null) => app.cats.find((c) => c.id === id);
 export const membro = (id: string | null) => app.membros.find((m) => m.id === id);
 export const conta = (id: string | null) => app.contas.find((c) => c.id === id);
+/** Recorrência paga no cartão (embutida na fatura): acompanhada pelos itens, fora dos totais. */
+export const embutida = (recorrenciaId: string | null) => !!app.recs.find((r) => r.id === recorrenciaId)?.cartao_conta_id;
 
 export const MEIOS = { pix: 'Pix', debito: 'Débito', cartao: 'Cartão', boleto: 'Boleto', transferencia: 'Transf.', tarifa: 'Tarifa', outro: 'Outro', manual: 'Manual' } as const;
 export const NATUREZAS = { gasto: 'Gasto', receita: 'Receita', transferencia: 'Transferência', pagamento_fatura: 'Pag. fatura', ignorada: 'Não contar' } as const;

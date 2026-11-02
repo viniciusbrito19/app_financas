@@ -39,14 +39,15 @@
 		inicio: '',
 		fim: '',
 		ativo: true,
-		acumula: false
+		acumula: false,
+		cartao_conta_id: null as string | null
 	});
 
 	function abrir(r: Recorrencia | null) {
 		atual = r;
 		f = r
 			? { ...r, valor: valorInput(r.valor_base), inicio: r.inicio.slice(0, 7), fim: r.fim?.slice(0, 7) ?? '' }
-			: { tipo: 'despesa', descricao: '', categoria_id: null, membro_id: null, modo_valor: 'fixo', valor: '', janela_media: 3, dia_vencimento: 10, inicio: mesAtual().slice(0, 7), fim: '', ativo: true, acumula: false };
+			: { tipo: 'despesa', descricao: '', categoria_id: null, membro_id: null, modo_valor: 'fixo', valor: '', janela_media: 3, dia_vencimento: 10, inicio: mesAtual().slice(0, 7), fim: '', ativo: true, acumula: false, cartao_conta_id: null };
 		aberto = true;
 	}
 
@@ -63,6 +64,7 @@
 			dia_vencimento: resto.dia_vencimento,
 			ativo: resto.ativo,
 			acumula: resto.acumula,
+			cartao_conta_id: resto.tipo === 'despesa' ? resto.cartao_conta_id : null,
 			valor_base: parseValor(valor),
 			inicio: inicio + '-01',
 			fim: fim ? fim + '-01' : null
@@ -103,6 +105,7 @@
 								Dia {r.dia_vencimento} · {r.modo_valor === 'fixo' ? 'Fixo' : `Variável (média ${r.janela_media}m)`}
 								{#if r.membro_id}· {membro(r.membro_id)?.nome}{/if}
 								{#if r.acumula}· várias vezes{/if}
+								{#if r.cartao_conta_id}· no cartão{/if}
 								{#if !r.ativo}· Inativa{/if}
 							</p>
 						</div>
@@ -159,6 +162,18 @@
 			</span>
 			<input type="checkbox" class="size-5 shrink-0 accent-brand" bind:checked={f.acumula} />
 		</label>
+		{#if f.tipo === 'despesa' && app.contas.some((c) => c.tipo === 'cartao')}
+			<div>
+				<label class="label" for="cartao">Paga no cartão (embutida na fatura)</label>
+				<select id="cartao" class="input" bind:value={f.cartao_conta_id}>
+					<option value={null}>Não</option>
+					{#each app.contas.filter((c) => c.tipo === 'cartao') as c (c.id)}<option value={c.id}>{c.nome}</option>{/each}
+				</select>
+				<p class="mt-1 text-xs text-zinc-500">
+					Acompanhada pelas compras do cartão com a mesma categoria; não soma nos totais do mês (a fatura já soma).
+				</p>
+			</div>
+		{/if}
 		{#if atual}
 			<label class="flex items-center justify-between rounded-xl bg-zinc-100 px-3 py-3 dark:bg-zinc-800">
 				<span class="font-medium">Ativa</span>
