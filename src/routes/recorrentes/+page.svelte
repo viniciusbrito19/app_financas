@@ -17,13 +17,18 @@
 	}
 	carregar();
 
+	/** Despesas: "geral" = fora do cartão; "cartao" = embutidas na fatura (já somadas na fatura, nunca juntas). */
+	let filtroDespesa = $state<'geral' | 'cartao'>('geral');
+	const despesas = $derived(itens.filter((r) => r.tipo === 'despesa'));
+	const qtdCartao = $derived(despesas.filter((r) => r.cartao_conta_id).length);
+
 	const grupos = $derived(
 		(['receita', 'despesa'] as Tipo[]).map((tipo) => {
-			const ls = itens.filter((r) => r.tipo === tipo);
-			const soma = (rs: Recorrencia[]) => rs.reduce((s, r) => s + Number(r.valor_base), 0);
-			const ativas = ls.filter((r) => r.ativo);
-			// embutidas na fatura não somam (a fatura do cartão já as inclui)
-			return { tipo, ls, total: soma(ativas.filter((r) => !r.cartao_conta_id)), noCartao: soma(ativas.filter((r) => r.cartao_conta_id)) };
+			const ls = itens.filter(
+				(r) => r.tipo === tipo && (tipo === 'receita' || (filtroDespesa === 'cartao') === !!r.cartao_conta_id)
+			);
+			// total só do que está na lista exibida
+			return { tipo, ls, total: ls.filter((r) => r.ativo).reduce((s, r) => s + Number(r.valor_base), 0) };
 		})
 	);
 
@@ -96,8 +101,18 @@
 {#each grupos as g (g.tipo)}
 	<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
 		<span>{g.tipo === 'receita' ? 'Receitas' : 'Despesas'}</span>
-		<span>{brl(g.total)}/mês{#if g.noCartao}<span class="font-normal"> · +{brl(g.noCartao)} na fatura</span>{/if}</span>
+		<span>{brl(g.total)}/mês</span>
 	</h2>
+	{#if g.tipo === 'despesa'}
+		<div class="mb-2 flex gap-2">
+			{#each [['geral', 'Geral', despesas.length - qtdCartao], ['cartao', 'Cartão', qtdCartao]] as const as [v, r, n] (v)}
+				<button
+					class="chip shrink-0 px-3 py-1.5 text-xs {filtroDespesa === v ? 'bg-brand text-white' : 'bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300'}"
+					onclick={() => (filtroDespesa = v)}>{r} ({n})</button
+				>
+			{/each}
+		</div>
+	{/if}
 	{#if g.ls.length}
 		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
 			{#each g.ls as r (r.id)}
@@ -122,7 +137,11 @@
 			{/each}
 		</ul>
 	{:else}
-		<p class="card text-sm text-zinc-500">Nenhuma {g.tipo} cadastrada.</p>
+		<p class="card text-sm text-zinc-500">
+			{g.tipo === 'despesa' && filtroDespesa === 'cartao'
+				? "Nenhuma despesa marcada como paga no cartão. Edite uma recorrente e escolha o cartão em 'Paga no cartão'."
+				: `Nenhuma ${g.tipo} cadastrada.`}
+		</p>
 	{/if}
 {/each}
 
