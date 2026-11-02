@@ -226,11 +226,46 @@
 		return [...m.values()].sort((a, b) => +(a.id === 'fora') - +(b.id === 'fora') || b.total - a.total);
 	});
 
+	// --- vincular, a partir da prevista, transações do extrato ainda soltas no mês ----
+	let candidatas = $state<Transacao[]>([]);
+	let mostrarCandidatas = $state(false);
+
+	/** Transações de conta corrente do mês, sem vínculo, do mesmo sentido (saída/entrada) da prevista. */
+	async function carregarCandidatas(l: Lancamento) {
+		const correntes = app.contas.filter((c) => c.tipo === 'corrente').map((c) => c.id);
+		const despesa = l.tipo === 'despesa';
+		let q = sb
+			.from('transacoes')
+			.select('*')
+			.eq('residencia_id', app.res!.id)
+			.eq('competencia', l.competencia)
+			.eq('projetada', false)
+			.is('lancamento_id', null)
+			.in('conta_id', correntes)
+			.in('natureza', despesa ? ['gasto', 'pagamento_fatura'] : ['receita'])
+			.order('data');
+		q = despesa ? q.lt('valor', 0) : q.gt('valor', 0);
+		candidatas = ok(await q) as Transacao[];
+	}
+
+	async function vincular(t: Transacao) {
+		const l = atual!;
+		ok(await sb.rpc('vincular_transacao', { p_tx: t.id, p_lanc: l.id }));
+		// status e valor real recalculados no banco: reflete no formulário aberto
+		const novo = ok(await sb.from('lancamentos').select('*').eq('id', l.id).single()) as Lancamento;
+		atual = { ...l, ...novo };
+		f = { ...f, status: novo.status, valor: valorInput(novo.valor_real ?? novo.valor_previsto), pago_em: novo.pago_em ?? hoje() };
+		await Promise.all([carregarVinculadas(novo), carregarCandidatas(novo), carregar()]);
+	}
+
 	async function abrir(l: L | null) {
 		atual = l;
 		vinculadas = [];
+		candidatas = [];
+		mostrarCandidatas = false;
 		grupoAberto = null;
 		if (l && conciliado(l)) carregarVinculadas(l);
+		if (l?.recorrencia_id && !l.recorrencias?.cartao_conta_id) carregarCandidatas(l);
 		f = l
 			? { ...l, valor: valorInput(l.valor_real ?? l.valor_previsto), pago_em: l.pago_em ?? hoje() }
 			: { tipo: 'despesa', descricao: '', categoria_id: null, membro_id: null, valor: '', vencimento: hoje().startsWith(app.mes.slice(0, 8)) ? hoje() : app.mes, status: 'previsto', pago_em: hoje() };
@@ -505,6 +540,27 @@
 					</li>
 				{/each}
 			</ul>
+		</div>
+	{/if}
+	{#if candidatas.length}
+		<div class="mb-4 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700">
+			<button type="button" class="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm" onclick={() => (mostrarCandidatas = !mostrarCandidatas)}>
+				<span class="font-medium">🔗 Vincular lançamentos do mês <span class="text-xs font-normal text-zinc-500">({candidatas.length} soltos)</span></span>
+				<span class="text-zinc-400">{mostrarCandidatas ? '▴' : '▾'}</span>
+			</button>
+			{#if mostrarCandidatas}
+				<ul class="divide-y divide-zinc-100 px-3 pb-2 dark:divide-zinc-800">
+					{#each candidatas as t (t.id)}
+						<li class="flex items-center gap-2 py-1.5 text-sm">
+							<span class="w-11 shrink-0 text-xs text-zinc-500">{dataCurta(t.data)}</span>
+							<span class="min-w-0 flex-1 truncate">{t.descricao}</span>
+							<span class="tabular-nums">{brl(Math.abs(t.valor))}</span>
+							<button type="button" class="rounded-lg bg-brand/10 px-2 py-1 text-xs font-semibold text-brand" onclick={() => vincular(t)}>Vincular</button>
+						</li>
+					{/each}
+				</ul>
+				<p class="px-3 pb-2 text-xs text-zinc-500">Para desvincular, toque na transação vinculada e escolha "Nenhum" em Conciliar.</p>
+			{/if}
 		</div>
 	{/if}
 	<form class="space-y-4" onsubmit={salvar}>
