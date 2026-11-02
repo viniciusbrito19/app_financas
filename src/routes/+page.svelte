@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, cat, contaNoTotal, embutida, MEIOS, membro, rotuloCartao } from '#lib/app.svelte.ts';
+	import { app, cat, contaNoTotal, MEIOS, membro, rotuloCartao } from '#lib/app.svelte.ts';
 	import CamposBase from '#lib/components/CamposBase.svelte';
 	import Icone from '#lib/components/Icone.svelte';
 	import Reclassificar from '#lib/components/Reclassificar.svelte';
@@ -10,7 +10,9 @@
 	import { ok, sb } from '#lib/supabase.ts';
 	import type { Lancamento, Tipo, Transacao } from '#lib/types.ts';
 
-	type L = Lancamento & { transacoes: { count: number }[] };
+	/** opções da recorrência vêm junto do banco (não dependem da lista em memória, que pode estar desatualizada) */
+	type Opcoes = { recorrencias?: { acumula: boolean; cartao_conta_id: string | null } | null };
+	type L = Lancamento & Opcoes & { transacoes: { count: number }[] };
 
 	let itens = $state<L[]>([]);
 	/** gastos/receitas importados que não correspondem a nenhum lançamento previsto */
@@ -20,7 +22,7 @@
 	async function carregar(mes = app.mes) {
 		ok(await sb.rpc('gerar_mes', { p_res: app.res!.id, p_comp: mes }));
 		const [ls, ts] = await Promise.all([
-			sb.from('lancamentos').select('*, transacoes(count)').eq('residencia_id', app.res!.id).eq('competencia', mes).order('vencimento'),
+			sb.from('lancamentos').select('*, transacoes(count), recorrencias(acumula, cartao_conta_id)').eq('residencia_id', app.res!.id).eq('competencia', mes).order('vencimento'),
 			sb
 				.from('transacoes')
 				.select('*')
@@ -33,7 +35,7 @@
 		]);
 		const lancs = ok(ls) as L[];
 		// compras do cartão do mês, para acompanhar as recorrentes embutidas na fatura
-		const contasEmb = [...new Set(lancs.map((l) => app.recs.find((r) => r.id === l.recorrencia_id)?.cartao_conta_id).filter((c): c is string => !!c))];
+		const contasEmb = [...new Set(lancs.map((l) => l.recorrencias?.cartao_conta_id).filter((c): c is string => !!c))];
 		const compras = contasEmb.length
 			? (ok(
 					await sb
@@ -62,9 +64,9 @@
 	/** Recorrentes pagas no cartão: previsto x compras da mesma categoria; fora dos totais (a fatura já soma). */
 	const embutidas = $derived(
 		itens
-			.filter((l) => embutida(l.recorrencia_id))
+			.filter((l) => !!l.recorrencias?.cartao_conta_id)
 			.map((l) => {
-				const contaId = app.recs.find((r) => r.id === l.recorrencia_id)?.cartao_conta_id;
+				const contaId = l.recorrencias?.cartao_conta_id;
 				const ts = comprasCartao.filter((t) => t.conta_id === contaId && t.categoria_id === l.categoria_id);
 				return { l, ts, real: -ts.reduce((s, t) => s + Number(t.valor), 0) };
 			})
@@ -92,8 +94,7 @@
 	});
 
 	/** Recorrência paga em várias vezes (ex.: faxina em saques) ainda sem atingir o previsto. */
-	const parcial = (l: Lancamento) =>
-		l.status !== 'pago' && l.valor_real != null && !!app.recs.find((r) => r.id === l.recorrencia_id)?.acumula;
+	const parcial = (l: Lancamento & Opcoes) => l.status !== 'pago' && l.valor_real != null && !!l.recorrencias?.acumula;
 
 	/** Melhor valor conhecido: o real, se informado; senão o previsto. Parcial: o maior dos dois. */
 	const valor = (l: Lancamento) =>
@@ -106,7 +107,7 @@
 	const grupos = $derived(
 		(['receita', 'despesa'] as Tipo[]).map((tipo) => {
 			const ls = itens
-				.filter((l) => l.tipo === tipo && !embutida(l.recorrencia_id))
+				.filter((l) => l.tipo === tipo && !l.recorrencias?.cartao_conta_id)
 				.sort((a, b) => +(a.status === 'pago') - +(b.status === 'pago') || a.vencimento.localeCompare(b.vencimento));
 			// importados não previstos já são realizados: entram no total e no pago
 			const extra = outros.filter((t) => (tipo === 'receita' ? t.valor > 0 : t.valor < 0)).reduce((s, t) => s + Math.abs(t.valor), 0);

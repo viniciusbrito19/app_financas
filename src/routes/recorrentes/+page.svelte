@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, cat, membro } from '#lib/app.svelte.ts';
+	import { app, carregarCadastros, cat, membro } from '#lib/app.svelte.ts';
 	import CamposBase from '#lib/components/CamposBase.svelte';
 	import Icone from '#lib/components/Icone.svelte';
 	import Seg from '#lib/components/Seg.svelte';
@@ -20,7 +20,10 @@
 	const grupos = $derived(
 		(['receita', 'despesa'] as Tipo[]).map((tipo) => {
 			const ls = itens.filter((r) => r.tipo === tipo);
-			return { tipo, ls, total: ls.filter((r) => r.ativo).reduce((s, r) => s + Number(r.valor_base), 0) };
+			const soma = (rs: Recorrencia[]) => rs.reduce((s, r) => s + Number(r.valor_base), 0);
+			const ativas = ls.filter((r) => r.ativo);
+			// embutidas na fatura não somam (a fatura do cartão já as inclui)
+			return { tipo, ls, total: soma(ativas.filter((r) => !r.cartao_conta_id)), noCartao: soma(ativas.filter((r) => r.cartao_conta_id)) };
 		})
 	);
 
@@ -75,14 +78,15 @@
 				: await sb.from('recorrencias').insert({ ...row, residencia_id: app.res!.id })
 		);
 		aberto = false;
-		carregar();
+		// atualiza também a lista global (usada no Mês para embutidas e "várias vezes")
+		await Promise.all([carregar(), carregarCadastros()]);
 	}
 
 	async function excluir() {
 		if (!atual || !confirm('Excluir esta recorrência? Lançamentos já pagos ou com valor informado são mantidos.')) return;
 		ok(await sb.from('recorrencias').delete().eq('id', atual.id));
 		aberto = false;
-		carregar();
+		await Promise.all([carregar(), carregarCadastros()]);
 	}
 </script>
 
@@ -91,7 +95,8 @@
 
 {#each grupos as g (g.tipo)}
 	<h2 class="mt-6 mb-2 flex justify-between px-1 text-sm font-semibold text-zinc-500">
-		<span>{g.tipo === 'receita' ? 'Receitas' : 'Despesas'}</span><span>{brl(g.total)}/mês</span>
+		<span>{g.tipo === 'receita' ? 'Receitas' : 'Despesas'}</span>
+		<span>{brl(g.total)}/mês{#if g.noCartao}<span class="font-normal"> · +{brl(g.noCartao)} na fatura</span>{/if}</span>
 	</h2>
 	{#if g.ls.length}
 		<ul class="card divide-y divide-zinc-100 p-0 dark:divide-zinc-800">
