@@ -134,8 +134,8 @@
 					.select('competencia, categoria_id, valor')
 					.eq('residencia_id', app.res!.id)
 					.eq('meio', 'cartao')
-					.gte('competencia', addMes(l.competencia, -3))
-					.lt('competencia', l.competencia)
+					.gte('competencia', addMes(l.competencia, -4))
+					.lt('competencia', addMes(l.competencia, -1))
 			) as { competencia: string; categoria_id: string | null; valor: number }[];
 			const meses = new Set(hist.map((h) => h.competencia)).size;
 			if (meses) {

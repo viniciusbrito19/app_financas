@@ -6,7 +6,7 @@
 	import Reclassificar from '#lib/components/Reclassificar.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
 	import { naturezaDe } from '#lib/importacao/normalizar.ts';
-	import { brl, dataCurta, mesLabel } from '#lib/format.ts';
+	import { addMes, brl, dataCurta, mesLabel } from '#lib/format.ts';
 	import { lerArquivo, senhaNecessaria, type Leitura } from '#lib/importacao/ler.ts';
 	import { aplicarRegra, montarItens, paraLinha, projetarParcelas, sugerirConciliacao, type Item } from '#lib/importacao/previa.ts';
 	import { lembrarRegra } from '#lib/importacao/regras.ts';
@@ -42,7 +42,8 @@
 		ocupado = true;
 		try {
 			leitura = await lerArquivo(arquivo!, conta!, senha);
-			itens = montarItens(leitura.brutas, conta!, app.regras, competenciaFatura);
+			// compras do cartão contam no mês anterior ao vencimento da fatura
+			itens = montarItens(leitura.brutas, conta!, app.regras, competenciaFatura && addMes(competenciaFatura, -1));
 			await marcarDuplicadas();
 			await carregarLancamentos();
 		} catch (e) {
@@ -386,7 +387,8 @@
 		</p>
 		{#if leitura.fatura}
 			{@const soma = -itens.reduce((s, i) => s + i.valor, 0)}
-			<p>Fatura de <b>{mesLabel(competenciaFatura!)}</b> · vence {dataCurta(leitura.fatura.vencimento)} · total <b>{brl(leitura.fatura.total)}</b></p>
+			<p>Fatura que vence em {dataCurta(leitura.fatura.vencimento)} · total <b>{brl(leitura.fatura.total)}</b></p>
+			<p class="text-zinc-500">Gastos contam em <b>{mesLabel(addMes(competenciaFatura!, -1))}</b>; o pagamento, em {mesLabel(competenciaFatura!)}.</p>
 			{#if Math.abs(soma - leitura.fatura.total) > 0.01}
 				<p class="text-amber-600">Atenção: soma dos itens ({brl(soma)}) difere do total da fatura.</p>
 			{/if}
