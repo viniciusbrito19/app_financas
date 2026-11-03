@@ -22,7 +22,7 @@
 	async function carregar(mes = app.mes) {
 		ok(await sb.rpc('gerar_mes', { p_res: app.res!.id, p_comp: mes }));
 		const [ls, ts] = await Promise.all([
-			sb.from('lancamentos').select('*, transacoes(count), recorrencias(acumula, cartao_conta_id)')
+			sb.from('lancamentos').select('*, transacoes!lancamento_id(count), recorrencias(acumula, cartao_conta_id)')
 				.eq('residencia_id', app.res!.id)
 				.eq('competencia', mes)
 				.neq('status', 'cancelado')
@@ -38,8 +38,8 @@
 				.order('data')
 		]);
 		const lancs = ok(ls) as L[];
-		// compras do cartão do mês, para acompanhar as recorrentes embutidas na fatura
-		const contasEmb = [...new Set(lancs.map((l) => l.recorrencias?.cartao_conta_id).filter((c): c is string => !!c))];
+		// compras do cartão do mês: acompanham as embutidas e os avulsos pagos no cartão
+		const contasEmb = app.contas.filter((c) => c.tipo === 'cartao').map((c) => c.id);
 		const compras = contasEmb.length
 			? (ok(
 					await sb
@@ -65,16 +65,30 @@
 	let comprasCartao = $state<Transacao[]>([]);
 	let embutidaAberta = $state<string | null>(null);
 
-	/** Recorrentes pagas no cartão: previsto x compras da mesma categoria; fora dos totais (a fatura já soma). */
-	const embutidas = $derived(
-		itens
+	/** itens do cartão vinculados a cada despesa avulsa */
+	const itensAvulso = $derived(
+		comprasCartao.reduce((m, t) => (t.avulso_id ? m.set(t.avulso_id, [...(m.get(t.avulso_id) ?? []), t]) : m), new Map<string, Transacao[]>())
+	);
+	/** avulso vinculado a itens do cartão: vira "Cartão" e sai dos totais (a fatura já soma) */
+	const noCartao = (l: Lancamento) => !l.recorrencia_id && itensAvulso.has(l.id);
+
+	/**
+	 * Pagas no cartão, fora dos totais (a fatura já soma):
+	 * recorrentes embutidas (previsto x compras da mesma categoria) e avulsos (x itens vinculados).
+	 */
+	const embutidas = $derived([
+		...itens
 			.filter((l) => !!l.recorrencias?.cartao_conta_id)
 			.map((l) => {
 				const contaId = l.recorrencias?.cartao_conta_id;
-				const ts = comprasCartao.filter((t) => t.conta_id === contaId && t.categoria_id === l.categoria_id);
+				const ts = comprasCartao.filter((t) => t.conta_id === contaId && t.categoria_id === l.categoria_id && !t.avulso_id);
 				return { l, ts, real: -ts.reduce((s, t) => s + Number(t.valor), 0) };
-			})
-	);
+			}),
+		...itens.filter(noCartao).map((l) => {
+			const ts = itensAvulso.get(l.id)!;
+			return { l, ts, real: -ts.reduce((s, t) => s + Number(t.valor), 0) };
+		})
+	]);
 
 	const conciliado = (l: L) => (l.transacoes[0]?.count ?? 0) > 0;
 
@@ -118,7 +132,7 @@
 	const grupos = $derived(
 		(['receita', 'despesa'] as Tipo[]).map((tipo) => {
 			const ls = itens
-				.filter((l) => l.tipo === tipo && !l.recorrencias?.cartao_conta_id)
+				.filter((l) => l.tipo === tipo && !l.recorrencias?.cartao_conta_id && !noCartao(l))
 				.sort((a, b) => +(a.status === 'pago') - +(b.status === 'pago') || a.vencimento.localeCompare(b.vencimento));
 			// importados não previstos já são realizados: entram no total e no pago
 			const extra = outros.filter((t) => (tipo === 'receita' ? t.valor > 0 : t.valor < 0)).reduce((s, t) => s + Math.abs(t.valor), 0);
@@ -258,8 +272,23 @@
 		await Promise.all([carregarVinculadas(novo), carregarCandidatas(novo), carregar()]);
 	}
 
+	// --- avulso pago no cartão: vincular itens da fatura do mês ----
+	let mostrarItens = $state(false);
+	const avulsoDespesa = $derived(!!atual && !atual.recorrencia_id && atual.tipo === 'despesa');
+	const itensVinculados = $derived(atual ? (itensAvulso.get(atual.id) ?? []) : []);
+	/** compras do cartão ainda sem avulso; primeiro as da mesma categoria */
+	const itensLivres = $derived(
+		comprasCartao.filter((t) => !t.avulso_id).sort((a, b) => +(b.categoria_id === atual?.categoria_id) - +(a.categoria_id === atual?.categoria_id))
+	);
+
+	async function vincularItem(t: Transacao, avulso: string | null) {
+		ok(await sb.from('transacoes').update({ avulso_id: avulso }).eq('id', t.id));
+		await carregar();
+	}
+
 	async function abrir(l: L | null) {
 		atual = l;
+		mostrarItens = false;
 		vinculadas = [];
 		candidatas = [];
 		mostrarCandidatas = false;
@@ -389,7 +418,10 @@
 				{@const prev = Number(e.l.valor_previsto)}
 				{@const passou = e.real > prev}
 				<li>
-					<button class="flex w-full items-center gap-3 px-3 py-3 text-left" onclick={() => (embutidaAberta = embutidaAberta === e.l.id ? null : e.l.id)}>
+					<button
+						class="flex w-full items-center gap-3 px-3 py-3 text-left"
+						onclick={() => (e.l.recorrencia_id ? (embutidaAberta = embutidaAberta === e.l.id ? null : e.l.id) : abrir(e.l))}
+					>
 						<Icone c={cat(e.l.categoria_id)} />
 						<div class="min-w-0 flex-1">
 							<p class="truncate font-medium">{e.l.descricao}</p>
@@ -413,7 +445,9 @@
 			{/each}
 		</ul>
 		{:else}
-			<p class="card text-sm text-zinc-500">Nenhuma despesa marcada como paga no cartão. Marque em Recorrentes → "Paga no cartão".</p>
+			<p class="card text-sm text-zinc-500">
+				Nenhuma despesa paga no cartão. Marque em Recorrentes → "Paga no cartão" ou vincule itens da fatura a uma não prevista.
+			</p>
 		{/if}
 	{:else}
 		{#if despAvulsas.length}
@@ -560,6 +594,39 @@
 					{/each}
 				</ul>
 				<p class="px-3 pb-2 text-xs text-zinc-500">Para desvincular, toque na transação vinculada e escolha "Nenhum" em Conciliar.</p>
+			{/if}
+		</div>
+	{/if}
+	{#if avulsoDespesa && (itensVinculados.length || itensLivres.length)}
+		<div class="mb-4 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700">
+			<button type="button" class="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm" onclick={() => (mostrarItens = !mostrarItens)}>
+				<span class="font-medium">
+					💳 Itens da fatura
+					<span class="text-xs font-normal text-zinc-500">
+						({itensVinculados.length
+							? `${itensVinculados.length} vinculados · ${brl(-itensVinculados.reduce((s, t) => s + Number(t.valor), 0))}`
+							: 'pago no cartão? vincule as compras'})
+					</span>
+				</span>
+				<span class="text-zinc-400">{mostrarItens ? '▴' : '▾'}</span>
+			</button>
+			{#if mostrarItens}
+				<ul class="divide-y divide-zinc-100 px-3 pb-2 dark:divide-zinc-800">
+					{#each [...itensVinculados, ...itensLivres] as t (t.id)}
+						{@const ligado = t.avulso_id === atual?.id}
+						<li class="flex items-center gap-2 py-1.5 text-sm">
+							<span class="w-11 shrink-0 text-xs text-zinc-500">{dataCurta(t.data)}</span>
+							<span class="min-w-0 flex-1 truncate">{cat(t.categoria_id)?.icone ?? '•'} {t.descricao}{t.parcela ? ` ${t.parcela}/${t.parcelas}` : ''}</span>
+							<span class="tabular-nums">{brl(Math.abs(t.valor))}</span>
+							<button
+								type="button"
+								class="rounded-lg px-2 py-1 text-xs font-semibold {ligado ? 'bg-rose-500/10 text-rose-600' : 'bg-brand/10 text-brand'}"
+								onclick={() => vincularItem(t, ligado ? null : atual!.id)}>{ligado ? '✕' : 'Vincular'}</button
+							>
+						</li>
+					{/each}
+				</ul>
+				<p class="px-3 pb-2 text-xs text-zinc-500">Com itens vinculados, a despesa passa para a aba Cartão e sai do total do mês (a fatura já soma).</p>
 			{/if}
 		</div>
 	{/if}

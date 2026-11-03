@@ -107,6 +107,8 @@ export interface Transacao {
 	natureza: Natureza;
 	categoria_id: string | null;
 	lancamento_id: string | null;
+	/** despesa avulsa paga no cartão que este item da fatura atende */
+	avulso_id?: string | null;
 	parcela: number | null;
 	parcelas: number | null;
 	projetada: boolean;
