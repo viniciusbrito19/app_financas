@@ -40,8 +40,14 @@ export interface Recorrencia {
 	ativo: boolean;
 	/** paga em várias vezes no mês: só quita quando a soma atinge o previsto */
 	acumula: boolean;
-	/** embutida na fatura desta conta-cartão: só acompanhamento, não soma nos totais */
-	cartao_conta_id: string | null;
+}
+
+/** Meta mensal de gasto no cartão por categoria; realizado = itens da fatura da categoria. */
+export interface Meta {
+	id: string;
+	residencia_id: string;
+	categoria_id: string;
+	valor: number;
 }
 
 export interface Lancamento {
@@ -107,8 +113,6 @@ export interface Transacao {
 	natureza: Natureza;
 	categoria_id: string | null;
 	lancamento_id: string | null;
-	/** despesa avulsa paga no cartão que este item da fatura atende */
-	avulso_id?: string | null;
 	parcela: number | null;
 	parcelas: number | null;
 	projetada: boolean;

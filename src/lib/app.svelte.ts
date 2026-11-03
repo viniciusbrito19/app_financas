@@ -1,5 +1,5 @@
 import type { User } from '@supabase/supabase-js';
-import { mesAtual } from './format.ts';
+import { addMes, mesAtual } from './format.ts';
 import { ok, sb } from './supabase.ts';
 import type { Cartao, Categoria, Conta, Membro, Natureza, Recorrencia, Regra, Residencia } from './types.ts';
 
@@ -65,8 +65,24 @@ export function limpar() {
 export const cat = (id: string | null) => app.cats.find((c) => c.id === id);
 export const membro = (id: string | null) => app.membros.find((m) => m.id === id);
 export const conta = (id: string | null) => app.contas.find((c) => c.id === id);
-/** Recorrência paga no cartão (embutida na fatura): acompanhada pelos itens, fora dos totais. */
-export const embutida = (recorrenciaId: string | null) => !!app.recs.find((r) => r.id === recorrenciaId)?.cartao_conta_id;
+
+/** Média mensal por categoria dos gastos no cartão nos `n` meses anteriores a `comp` (null sem histórico). */
+export async function mediaCartao(comp: string, n = 3) {
+	const hist = ok(
+		await sb
+			.from('v_gastos_categoria')
+			.select('competencia, categoria_id, valor')
+			.eq('residencia_id', app.res!.id)
+			.eq('meio', 'cartao')
+			.gte('competencia', addMes(comp, -n))
+			.lt('competencia', comp)
+	) as { competencia: string; categoria_id: string | null; valor: number }[];
+	const meses = new Set(hist.map((h) => h.competencia)).size;
+	if (!meses) return null;
+	const m: Record<string, number> = {};
+	for (const h of hist) m[h.categoria_id ?? ''] = (m[h.categoria_id ?? ''] ?? 0) + Number(h.valor) / meses;
+	return m;
+}
 
 export const MEIOS = { pix: 'Pix', debito: 'Débito', cartao: 'Cartão', boleto: 'Boleto', transferencia: 'Transf.', tarifa: 'Tarifa', outro: 'Outro', manual: 'Manual' } as const;
 export const NATUREZAS = { gasto: 'Gasto', receita: 'Receita', transferencia: 'Transferência', pagamento_fatura: 'Pag. fatura', ignorada: 'Não contar' } as const;

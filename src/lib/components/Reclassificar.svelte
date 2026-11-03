@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Sheet para corrigir categoria/natureza/conciliação de uma transação já gravada (fatura, extrato, análise)
-	import { app, conta, embutida } from '#lib/app.svelte.ts';
+	import { app, conta } from '#lib/app.svelte.ts';
 	import { reclassificar } from '#lib/importacao/regras.ts';
 	import { ok, sb } from '#lib/supabase.ts';
 	import type { Lancamento, Transacao } from '#lib/types.ts';
@@ -35,7 +35,7 @@
 			) as Lancamento[];
 			if (t !== alvo) return;
 			// todos, inclusive os já pagos: um gasto extra no mês soma no valor real do lançamento
-			lancs = ls.filter((l) => !embutida(l.recorrencia_id) && l.status !== 'cancelado');
+			lancs = ls.filter((l) => l.status !== 'cancelado');
 			carregado = alvo.id;
 		})();
 	});

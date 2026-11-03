@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { app, carregarCadastros, cat, conta as contaDe, contaNoTotal, contarPendentes, embutida, MEIOS, NATUREZAS, rotuloCartao } from '#lib/app.svelte.ts';
+	import { app, carregarCadastros, cat, conta as contaDe, contaNoTotal, contarPendentes, MEIOS, NATUREZAS, rotuloCartao } from '#lib/app.svelte.ts';
 	import Classificar from '#lib/components/Classificar.svelte';
 	import Icone from '#lib/components/Icone.svelte';
 	import MonthPicker from '#lib/components/MonthPicker.svelte';
@@ -73,8 +73,7 @@
 		await Promise.all(comps.map((c) => sb.rpc('gerar_mes', { p_res: app.res!.id, p_comp: c })));
 		lancs = comps.length
 			? (ok(await sb.from('lancamentos').select('*').eq('residencia_id', app.res!.id).in('competencia', comps).order('vencimento')) as Lancamento[]).filter(
-					// embutidas na fatura do cartão não são pagas pelo extrato
-					(l) => !embutida(l.recorrencia_id) && l.status !== 'cancelado'
+					(l) => l.status !== 'cancelado'
 				)
 			: [];
 		sugerir();
