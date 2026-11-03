@@ -226,10 +226,7 @@
 	let candidatas = $state<Transacao[]>([]);
 	let mostrarCandidatas = $state(false);
 
-	/**
-	 * Transações de conta corrente do mês, sem vínculo, do mesmo sentido (saída/entrada) da prevista.
-	 * Fatura do cartão: é paga no mês seguinte ao das compras.
-	 */
+	/** Transações de conta corrente do mês, sem vínculo, do mesmo sentido (saída/entrada) da prevista. */
 	async function carregarCandidatas(l: Lancamento) {
 		const correntes = app.contas.filter((c) => c.tipo === 'corrente').map((c) => c.id);
 		const despesa = l.tipo === 'despesa';
@@ -237,7 +234,7 @@
 			.from('transacoes')
 			.select('*')
 			.eq('residencia_id', app.res!.id)
-			.eq('competencia', ehFatura(l) ? addMes(l.competencia, 1) : l.competencia)
+			.eq('competencia', l.competencia)
 			.eq('projetada', false)
 			.is('lancamento_id', null)
 			.in('conta_id', correntes)
