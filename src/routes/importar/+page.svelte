@@ -390,7 +390,7 @@
 		{#if leitura.fatura}
 			{@const soma = -itens.reduce((s, i) => s + i.valor, 0)}
 			<p>Fatura que vence em {dataCurta(leitura.fatura.vencimento)} · total <b>{brl(leitura.fatura.total)}</b></p>
-			<p class="text-zinc-500">Gastos contam em <b>{mesLabel(addMes(competenciaFatura!, -1))}</b>; o pagamento, em {mesLabel(competenciaFatura!)}.</p>
+			<p class="text-zinc-500">Gastos e fatura contam em <b>{mesLabel(addMes(competenciaFatura!, -1))}</b>; vencimento em {mesLabel(competenciaFatura!)}.</p>
 			{#if Math.abs(soma - leitura.fatura.total) > 0.01}
 				<p class="text-amber-600">Atenção: soma dos itens ({brl(soma)}) difere do total da fatura.</p>
 			{/if}

@@ -212,19 +212,24 @@
 		const m = new Map<string, { id: string; ts: Transacao[]; total: number }>();
 		const porCartao = agruparPor === 'cartao' && variosCartoes;
 		for (const t of vinculadas) {
-			const k = !contaNoTotal(t.natureza) ? 'fora' : porCartao ? `cartao:${t.cartao ?? ''}` : (t.categoria_id ?? '');
+			const k =
+				t.natureza === 'pagamento_fatura' ? 'pagamento' : !contaNoTotal(t.natureza) ? 'fora' : porCartao ? `cartao:${t.cartao ?? ''}` : (t.categoria_id ?? '');
 			const g = m.get(k) ?? m.set(k, { id: k, ts: [], total: 0 }).get(k)!;
 			g.ts.push(t);
 			g.total -= t.valor;
 		}
-		return [...m.values()].sort((a, b) => +(a.id === 'fora') - +(b.id === 'fora') || b.total - a.total);
+		const fim = (id: string) => (id === 'pagamento' ? 2 : id === 'fora' ? 1 : 0);
+		return [...m.values()].sort((a, b) => fim(a.id) - fim(b.id) || b.total - a.total);
 	});
 
 	// --- vincular, a partir da prevista, transações do extrato ainda soltas no mês ----
 	let candidatas = $state<Transacao[]>([]);
 	let mostrarCandidatas = $state(false);
 
-	/** Transações de conta corrente do mês, sem vínculo, do mesmo sentido (saída/entrada) da prevista. */
+	/**
+	 * Transações de conta corrente do mês, sem vínculo, do mesmo sentido (saída/entrada) da prevista.
+	 * Fatura do cartão: é paga no mês seguinte ao das compras.
+	 */
 	async function carregarCandidatas(l: Lancamento) {
 		const correntes = app.contas.filter((c) => c.tipo === 'corrente').map((c) => c.id);
 		const despesa = l.tipo === 'despesa';
@@ -232,7 +237,7 @@
 			.from('transacoes')
 			.select('*')
 			.eq('residencia_id', app.res!.id)
-			.eq('competencia', l.competencia)
+			.eq('competencia', ehFatura(l) ? addMes(l.competencia, 1) : l.competencia)
 			.eq('projetada', false)
 			.is('lancamento_id', null)
 			.in('conta_id', correntes)
@@ -515,12 +520,14 @@
 					{@const ehCartao = g.id.startsWith('cartao:')}
 					{@const c = ehCartao ? undefined : cat(g.id || null)}
 					{@const meta = ehCartao ? undefined : metas.find((m) => m.categoria_id === g.id)}
-					{@const media = mediaCartao && g.id !== 'fora' && !ehCartao ? (mediaCartao[g.id] ?? 0) : null}
+					{@const media = mediaCartao && g.id !== 'fora' && g.id !== 'pagamento' && !ehCartao ? (mediaCartao[g.id] ?? 0) : null}
 					<li>
 						<button type="button" class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm" onclick={() => (grupoAberto = grupoAberto === g.id ? null : g.id)}>
 							<span class="min-w-0 flex-1 truncate font-medium">
 								{g.id === 'fora'
 									? '⊘ Não contam'
+									: g.id === 'pagamento'
+										? '💸 Pagamento da fatura'
 									: ehCartao
 										? `💳 ${rotuloCartao(g.ts[0].conta_id, g.ts[0].cartao)}`
 										: `${c?.icone ?? '•'} ${c?.nome ?? 'Sem categoria'}`}
